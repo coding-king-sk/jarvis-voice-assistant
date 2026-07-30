@@ -26,6 +26,9 @@ class SpeechRecognizerManager(private val context: Context) {
     var onReady: (() -> Unit)? = null
     var onEndOfSpeech: (() -> Unit)? = null
 
+    /** Awaaz kitni tez hai — orb ka waveform isse chalta hai. */
+    var onRmsChanged: ((Float) -> Unit)? = null
+
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
     fun startListening() {
@@ -68,7 +71,7 @@ class SpeechRecognizerManager(private val context: Context) {
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) { onReady?.invoke() }
         override fun onBeginningOfSpeech() {}
-        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onRmsChanged(rmsdB: Float) { onRmsChanged?.invoke(rmsdB) }
         override fun onBufferReceived(buffer: ByteArray?) {}
 
         override fun onEndOfSpeech() {

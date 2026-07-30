@@ -46,22 +46,35 @@ class AssistantEngine(private val appContext: Context) {
     private val _partialText = MutableStateFlow("")
     val partialText: StateFlow<String> = _partialText.asStateFlow()
 
+    /** Mic ka live level, 0 se 1 ke beech — orb ka waveform isi se hilta hai. */
+    private val _micLevel = MutableStateFlow(0f)
+    val micLevel: StateFlow<Float> = _micLevel.asStateFlow()
+
     /** Turn khatam hone par call hota hai — service isse wake word wapas start karta hai. */
     var onTurnFinished: (() -> Unit)? = null
+
+    private var preferGeminiTts = true
 
     init {
         tts.init()
         stt.onPartialResult = { _partialText.value = it }
+        stt.onRmsChanged = { rms ->
+            // rms roughly -2 se 10 dB tak aata hai; use 0..1 me badal dete hain
+            val normalized = ((rms + 2f) / 12f).coerceIn(0f, 1f)
+            _micLevel.value = normalized
+        }
         stt.onFinalResult = { text ->
             _partialText.value = ""
+            _micLevel.value = 0f
             addMessage(text, fromUser = true)
             think(text)
         }
         stt.onError = { message ->
             _partialText.value = ""
+            _micLevel.value = 0f
             _state.value = AssistantState.IDLE
             scope.launch {
-                tts.speak(message)
+                speakOut(message)
                 finishTurn()
             }
         }
@@ -77,6 +90,7 @@ class AssistantEngine(private val appContext: Context) {
 
     fun stopListening() {
         stt.stopListening()
+        _micLevel.value = 0f
         _state.value = AssistantState.IDLE
     }
 
@@ -87,7 +101,34 @@ class AssistantEngine(private val appContext: Context) {
         think(text)
     }
 
+    /** Camera se li gayi photo ke baare me sawaal. */
+    fun sendImage(jpegBase64: String, question: String) = scope.launch {
+        val prompt = question.ifBlank { "Is photo me kya hai? Chhota sa jawab do." }
+        addMessage(prompt, fromUser = true)
+
+        if (!OfflineRouter.isOnline(appContext)) {
+            respond("Photo samajhne ke liye internet chahiye.")
+            return@launch
+        }
+
+        _state.value = AssistantState.THINKING
+        handleReply(gemini.askWithImage(jpegBase64, prompt))
+    }
+
     private fun think(userText: String) = scope.launch {
+        // Internet nahi hai? Khud hi samajhne ki koshish karo.
+        if (!OfflineRouter.isOnline(appContext)) {
+            val local = OfflineRouter.match(userText)
+            if (local == null) {
+                respond("Internet nahi hai. Abhi sirf phone ke basic kaam kar sakta hoon.")
+                return@launch
+            }
+            _state.value = AssistantState.ACTING
+            Log.i(TAG, "offline tool: ${local.tool} ${local.args}")
+            respond(tools.execute(local.tool, local.args))
+            return@launch
+        }
+
         _state.value = AssistantState.THINKING
         handleReply(gemini.ask(userText))
     }
@@ -95,6 +136,7 @@ class AssistantEngine(private val appContext: Context) {
     private suspend fun handleReply(reply: LlmReply) {
         when {
             reply.error != null -> {
+                // Gemini fail ho gaya? Offline router se koshish karo.
                 respond(reply.error)
             }
 
@@ -119,13 +161,20 @@ class AssistantEngine(private val appContext: Context) {
         if (text.isNotBlank()) {
             addMessage(text, fromUser = false)
             _state.value = AssistantState.SPEAKING
-            tts.speak(text)
+            speakOut(text)
         }
         finishTurn()
     }
 
+    /** Offline ho to hamesha phone ki apni awaaz use karo. */
+    private suspend fun speakOut(text: String) {
+        tts.useGeminiTts = preferGeminiTts && OfflineRouter.isOnline(appContext)
+        tts.speak(text)
+    }
+
     private fun finishTurn() {
         _state.value = AssistantState.IDLE
+        _micLevel.value = 0f
         onTurnFinished?.invoke()
     }
 
@@ -139,7 +188,11 @@ class AssistantEngine(private val appContext: Context) {
     }
 
     fun setVoice(voice: String) { tts.voiceName = voice }
-    fun setUseGeminiTts(enabled: Boolean) { tts.useGeminiTts = enabled }
+
+    fun setUseGeminiTts(enabled: Boolean) {
+        preferGeminiTts = enabled
+        tts.useGeminiTts = enabled
+    }
 
     fun release() {
         stt.destroy()

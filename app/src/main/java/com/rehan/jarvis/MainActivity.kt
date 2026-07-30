@@ -3,11 +3,13 @@ package com.rehan.jarvis
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,8 +17,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.core.content.ContextCompat
 import com.rehan.jarvis.core.AssistantEngine
+import com.rehan.jarvis.core.Intents
 import com.rehan.jarvis.service.JarvisForegroundService
 import com.rehan.jarvis.ui.AssistantScreen
+import java.io.ByteArrayOutputStream
 
 class MainActivity : ComponentActivity() {
 
@@ -25,6 +29,23 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { /* result UI me reflect ho jaata hai */ }
+
+    /** Camera se photo lo aur Gemini se poochho "ye kya hai?" */
+    private val cameraLauncher = registerForActivityResult(
+        ActivityResultContracts.TakePicturePreview()
+    ) { bitmap: Bitmap? ->
+        if (bitmap == null) return@registerForActivityResult
+        val stream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+        val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+        engine.sendImage(base64, "Is photo me kya hai? Do line me batao.")
+    }
+
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) cameraLauncher.launch(null)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,10 +67,46 @@ class MainActivity : ComponentActivity() {
                             JarvisForegroundService.stop(this)
                         },
                         hasMicPermission = { hasPermission(Manifest.permission.RECORD_AUDIO) },
-                        onRequestPermissions = { askPermissions() }
+                        onRequestPermissions = { askPermissions() },
+                        onOpenCamera = { openCamera() }
                     )
                 }
             }
+        }
+
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    /** Widget ya Quick Settings tile se aaye to seedha sunna shuru karo. */
+    private fun handleIntent(intent: Intent?) {
+        if (intent == null) return
+
+        if (intent.getBooleanExtra(Intents.EXTRA_START_LISTENING, false)) {
+            intent.removeExtra(Intents.EXTRA_START_LISTENING)
+            if (hasPermission(Manifest.permission.RECORD_AUDIO)) {
+                engine.startListening()
+            } else {
+                askPermissions()
+            }
+        }
+
+        if (intent.getBooleanExtra(Intents.EXTRA_OPEN_CAMERA, false)) {
+            intent.removeExtra(Intents.EXTRA_OPEN_CAMERA)
+            openCamera()
+        }
+    }
+
+    private fun openCamera() {
+        if (hasPermission(Manifest.permission.CAMERA)) {
+            cameraLauncher.launch(null)
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 

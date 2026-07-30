@@ -126,7 +126,7 @@ fun IrisOrb(
                         color = primary.copy(alpha = 0.22f * (1f - p)),
                         radius = radius * (1f + p * 0.85f),
                         center = center,
-                        style = Stroke(width = 2.dpToPx())
+                        style = Stroke(width = dp(2f))
                     )
                 }
             }
@@ -145,7 +145,10 @@ fun IrisOrb(
             // ---- Andar ke ghoomte huye rang ----
             rotate(spin, center) {
                 softBlob(center + Offset(radius * 0.30f, 0f), radius * 0.78f, primary, 0.55f)
-                softBlob(center - Offset(radius * 0.26f, radius * 0.18f), radius * 0.70f, secondary, 0.50f)
+                softBlob(
+                    center - Offset(radius * 0.26f, radius * 0.18f),
+                    radius * 0.70f, secondary, 0.50f
+                )
             }
             rotate(counterSpin, center) {
                 softBlob(center + Offset(0f, radius * 0.30f), radius * 0.62f, Color.White, 0.10f)
@@ -170,7 +173,7 @@ fun IrisOrb(
                 ),
                 radius = radius,
                 center = center,
-                style = Stroke(width = 2.5f.dpToPx())
+                style = Stroke(width = dp(2.5f))
             )
 
             // ---- Kaanch jaisi highlight ----
@@ -206,7 +209,7 @@ private fun DrawScope.drawWaveform(
         val angle = (2f * PI.toFloat() / bars) * i
 
         // Do alag speed ki lehrein mila kar natural dikhta hai
-        val wave = (sin(angle * 3f + phase) * 0.6f + sin(angle * 7f - phase * 1.6f) * 0.4f)
+        val wave = sin(angle * 3f + phase) * 0.6f + sin(angle * 7f - phase * 1.6f) * 0.4f
         val length = maxLength * (0.35f + 0.65f * ((wave + 1f) / 2f))
 
         val inner = Offset(
@@ -222,7 +225,7 @@ private fun DrawScope.drawWaveform(
             color = color.copy(alpha = 0.35f + 0.5f * level),
             start = inner,
             end = outer,
-            strokeWidth = 2f.dpToPx()
+            strokeWidth = dp(2f)
         )
     }
 }
@@ -245,13 +248,5 @@ private fun DrawScope.softBlob(
     )
 }
 
-private fun DrawScope.dpToPx(): Float = this.density
-
-private fun Float.dpToPxIn(scope: DrawScope): Float = this * scope.density
-
-/** Chhota helper taaki Canvas ke andar dp likhna aasan rahe. */
-private fun DrawScope.px(dp: Float): Float = dp * density
-
-private fun Float.dpToPx(): Float = this
-
-private fun Int.dpToPx(): Float = this.toFloat()
+/** dp ko pixel me badalne ka chhota helper. */
+private fun DrawScope.dp(value: Float): Float = value * density

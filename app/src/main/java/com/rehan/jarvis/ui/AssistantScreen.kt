@@ -9,17 +9,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -48,7 +50,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rehan.jarvis.core.AssistantEngine
@@ -69,14 +70,16 @@ fun AssistantScreen(
     onStartService: () -> Unit,
     onStopService: () -> Unit,
     hasMicPermission: () -> Boolean,
-    onRequestPermissions: () -> Unit
+    onRequestPermissions: () -> Unit,
+    onOpenCamera: () -> Unit = {}
 ) {
     val state by engine.state.collectAsState()
     val messages by engine.messages.collectAsState()
     val partial by engine.partialText.collectAsState()
+    val micLevel by engine.micLevel.collectAsState()
 
     var input by remember { mutableStateOf("") }
-    var serviceOn by remember { mutableStateOf(false) }
+    var wakeWordOn by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(messages.size) {
@@ -86,76 +89,84 @@ fun AssistantScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(Ink, InkMid, Ink)
-                )
-            )
+            .background(Brush.verticalGradient(listOf(Ink, InkMid, Ink)))
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
+                .imePadding()
         ) {
             TopBar(
-                serviceOn = serviceOn,
-                onToggleService = {
-                    if (serviceOn) {
-                        onStopService(); serviceOn = false
-                    } else if (hasMicPermission()) {
-                        onStartService(); serviceOn = true
+                wakeWordOn = wakeWordOn,
+                onToggleWakeWord = {
+                    if (wakeWordOn) {
+                        onStopService()
+                        wakeWordOn = false
                     } else {
-                        onRequestPermissions()
+                        if (hasMicPermission()) {
+                            onStartService()
+                            wakeWordOn = true
+                        } else {
+                            onRequestPermissions()
+                        }
                     }
                 },
                 onReset = { engine.newConversation() }
             )
 
-            // ---------- Orb ----------
             IrisOrb(
                 state = state,
+                level = micLevel,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(230.dp)
             )
 
-            Spacer(Modifier.height(4.dp))
-
             StatusText(state = state, partial = partial)
 
-            Spacer(Modifier.height(12.dp))
-
-            // ---------- Transcript ----------
-            Box(modifier = Modifier.weight(1f)) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
                 if (messages.isEmpty()) {
                     EmptyState(onSuggestion = { engine.sendText(it) })
                 } else {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            start = 20.dp, end = 20.dp, top = 8.dp, bottom = 12.dp
+                        ),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        items(messages) { msg -> MessageBubble(msg) }
+                        items(messages) { message -> MessageBubble(message) }
                     }
                 }
             }
 
             InputBar(
-                input = input,
-                onInputChange = { input = it },
+                value = input,
+                onValueChange = { input = it },
                 onSend = {
                     if (input.isNotBlank()) {
-                        engine.sendText(input); input = ""
+                        engine.sendText(input.trim())
+                        input = ""
                     }
                 },
                 listening = state == AssistantState.LISTENING,
                 onMic = {
-                    if (!hasMicPermission()) onRequestPermissions()
-                    else if (state == AssistantState.LISTENING) engine.stopListening()
-                    else engine.startListening()
-                }
+                    if (!hasMicPermission()) {
+                        onRequestPermissions()
+                    } else if (state == AssistantState.LISTENING) {
+                        engine.stopListening()
+                    } else {
+                        engine.startListening()
+                    }
+                },
+                onCamera = onOpenCamera
             )
         }
     }
@@ -163,8 +174,8 @@ fun AssistantScreen(
 
 @Composable
 private fun TopBar(
-    serviceOn: Boolean,
-    onToggleService: () -> Unit,
+    wakeWordOn: Boolean,
+    onToggleWakeWord: () -> Unit,
     onReset: () -> Unit
 ) {
     Row(
@@ -173,40 +184,30 @@ private fun TopBar(
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = "Jarvis",
-            color = TextHi,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.SemiBold
-        )
-
-        Spacer(Modifier.weight(1f))
-
-        // Wake word pill
         Row(
             modifier = Modifier
                 .clip(CircleShape)
-                .background(if (serviceOn) Accent.copy(alpha = 0.18f) else Glass)
-                .border(1.dp, if (serviceOn) Accent.copy(alpha = 0.5f) else GlassBorder, CircleShape)
-                .clickable { onToggleService() }
+                .background(Glass)
+                .border(1.dp, GlassBorder, CircleShape)
+                .clickable { onToggleWakeWord() }
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(7.dp)
+                    .size(8.dp)
                     .clip(CircleShape)
-                    .background(if (serviceOn) Color(0xFF32E0A8) else Color(0xFF57608A))
+                    .background(if (wakeWordOn) Color(0xFF32E0A8) else Color(0xFF4A5170))
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = if (serviceOn) "Sun raha hoon" else "Wake word off",
-                color = if (serviceOn) TextHi else TextLo,
+                text = if (wakeWordOn) "Sun raha hoon" else "Wake word band",
+                color = TextLo,
                 fontSize = 12.sp
             )
         }
 
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.weight(1f))
 
         Box(
             modifier = Modifier
@@ -218,8 +219,8 @@ private fun TopBar(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                Icons.Default.Refresh,
-                contentDescription = "Nayi baat",
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "Nayi baat shuru karo",
                 tint = TextLo,
                 modifier = Modifier.size(18.dp)
             )
@@ -229,65 +230,65 @@ private fun TopBar(
 
 @Composable
 private fun StatusText(state: AssistantState, partial: String) {
-    val label = when (state) {
-        AssistantState.IDLE -> ""
-        AssistantState.LISTENING -> partial.ifBlank { "Sun raha hoon\u2026" }
-        AssistantState.THINKING -> "Soch raha hoon\u2026"
-        AssistantState.ACTING -> "Kaam kar raha hoon\u2026"
-        AssistantState.SPEAKING -> "Bol raha hoon\u2026"
+    val text = when {
+        partial.isNotBlank() -> partial
+        state == AssistantState.LISTENING -> "Sun raha hoon..."
+        state == AssistantState.THINKING -> "Soch raha hoon..."
+        state == AssistantState.ACTING -> "Kaam kar raha hoon..."
+        state == AssistantState.SPEAKING -> "Bol raha hoon..."
+        else -> ""
     }
 
     AnimatedVisibility(
-        visible = label.isNotBlank(),
+        visible = text.isNotBlank(),
         enter = fadeIn(),
         exit = fadeOut()
     ) {
         Text(
-            text = label,
+            text = text,
+            color = TextLo,
+            fontSize = 14.sp,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 32.dp),
-            color = TextHi.copy(alpha = 0.85f),
-            fontSize = 15.sp,
-            textAlign = TextAlign.Center
+                .padding(horizontal = 32.dp, vertical = 4.dp)
         )
     }
 }
 
 @Composable
 private fun EmptyState(onSuggestion: (String) -> Unit) {
-    val ideas = listOf(
-        "Mummy ko call karo",
-        "Subah 7 baje alarm laga do",
-        "Volume 50 kar do",
-        "YouTube kholo"
+    val suggestions = listOf(
+        "Battery kitni hai?",
+        "Torch on karo",
+        "Notifications sunao",
+        "Agla gaana lagao"
     )
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 28.dp),
+            .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "Bolo, kya karna hai?",
+            text = "Kuch bhi poochho",
             color = TextHi,
-            fontSize = 17.sp,
+            fontSize = 18.sp,
             fontWeight = FontWeight.Medium
         )
-        Spacer(Modifier.height(16.dp))
-        ideas.forEach { idea ->
+        Spacer(Modifier.height(14.dp))
+
+        suggestions.forEach { suggestion ->
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
                     .padding(vertical = 4.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(RoundedCornerShape(20.dp))
                     .background(Glass)
-                    .border(1.dp, GlassBorder, RoundedCornerShape(14.dp))
-                    .clickable { onSuggestion(idea) }
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .border(1.dp, GlassBorder, RoundedCornerShape(20.dp))
+                    .clickable { onSuggestion(suggestion) }
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
-                Text(text = idea, color = TextLo, fontSize = 14.sp)
+                Text(text = suggestion, color = TextLo, fontSize = 13.sp)
             }
         }
     }
@@ -295,35 +296,39 @@ private fun EmptyState(onSuggestion: (String) -> Unit) {
 
 @Composable
 private fun MessageBubble(message: ChatMessage) {
-    val isUser = message.fromUser
+    val fromUser = message.fromUser
+
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+        horizontalArrangement = if (fromUser) Arrangement.End else Arrangement.Start
     ) {
         Box(
             modifier = Modifier
+                .widthIn(max = 300.dp)
                 .clip(
                     RoundedCornerShape(
                         topStart = 18.dp,
                         topEnd = 18.dp,
-                        bottomStart = if (isUser) 18.dp else 6.dp,
-                        bottomEnd = if (isUser) 6.dp else 18.dp
+                        bottomStart = if (fromUser) 18.dp else 4.dp,
+                        bottomEnd = if (fromUser) 4.dp else 18.dp
                     )
                 )
-                .background(
-                    if (isUser) {
-                        Brush.horizontalGradient(
-                            listOf(Color(0xFF4F7CFF), Color(0xFF8A5CF6))
+                .then(
+                    if (fromUser) {
+                        Modifier.background(
+                            Brush.horizontalGradient(
+                                listOf(Color(0xFF4F7CFF), Color(0xFF8A5CF6))
+                            )
                         )
                     } else {
-                        SolidColor(Glass)
+                        Modifier.background(Glass)
                     }
                 )
-                .padding(horizontal = 15.dp, vertical = 11.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             Text(
                 text = message.text,
-                color = if (isUser) Color.White else TextHi.copy(alpha = 0.92f),
+                color = if (fromUser) Color.White else TextHi,
                 fontSize = 15.sp
             )
         }
@@ -332,45 +337,65 @@ private fun MessageBubble(message: ChatMessage) {
 
 @Composable
 private fun InputBar(
-    input: String,
-    onInputChange: (String) -> Unit,
+    value: String,
+    onValueChange: (String) -> Unit,
     onSend: () -> Unit,
     listening: Boolean,
-    onMic: () -> Unit
+    onMic: () -> Unit,
+    onCamera: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // Camera se sawaal
         Box(
             modifier = Modifier
-                .weight(1f)
+                .size(44.dp)
                 .clip(CircleShape)
                 .background(Glass)
                 .border(1.dp, GlassBorder, CircleShape)
-                .padding(horizontal = 18.dp, vertical = 14.dp),
-            contentAlignment = Alignment.CenterStart
+                .clickable { onCamera() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.PhotoCamera,
+                contentDescription = "Photo ke baare me poochho",
+                tint = TextLo,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+
+        Spacer(Modifier.width(8.dp))
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Glass)
+                .border(1.dp, GlassBorder, RoundedCornerShape(24.dp))
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             BasicTextField(
-                value = input,
-                onValueChange = onInputChange,
-                modifier = Modifier.fillMaxWidth(),
+                value = value,
+                onValueChange = onValueChange,
                 singleLine = true,
                 textStyle = TextStyle(color = TextHi, fontSize = 15.sp),
                 cursorBrush = SolidColor(Accent),
+                modifier = Modifier.fillMaxWidth(),
                 decorationBox = { inner ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            if (input.isEmpty()) {
-                                Text("Type karo\u2026", color = TextLo, fontSize = 15.sp)
+                        Box(Modifier.weight(1f)) {
+                            if (value.isEmpty()) {
+                                Text("Type karo ya bolo...", color = TextLo, fontSize = 15.sp)
                             }
                             inner()
                         }
-                        if (input.isNotBlank()) {
+                        if (value.isNotEmpty()) {
                             Icon(
-                                Icons.AutoMirrored.Filled.Send,
+                                imageVector = Icons.AutoMirrored.Filled.Send,
                                 contentDescription = "Bhejo",
                                 tint = Accent,
                                 modifier = Modifier
@@ -383,25 +408,27 @@ private fun InputBar(
             )
         }
 
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(8.dp))
 
         Box(
             modifier = Modifier
-                .size(54.dp)
+                .size(52.dp)
                 .clip(CircleShape)
                 .background(
-                    if (listening) {
-                        Brush.linearGradient(listOf(Color(0xFFFF5F6D), Color(0xFFFF8A5B)))
-                    } else {
-                        Brush.linearGradient(listOf(Color(0xFF4F7CFF), Color(0xFF8A5CF6)))
-                    }
+                    Brush.linearGradient(
+                        if (listening) {
+                            listOf(Color(0xFFFF5F6D), Color(0xFFFF8A5B))
+                        } else {
+                            listOf(Color(0xFF4F7CFF), Color(0xFF8A5CF6))
+                        }
+                    )
                 )
                 .clickable { onMic() },
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = if (listening) Icons.Default.Close else Icons.Default.Mic,
-                contentDescription = if (listening) "Ruko" else "Bolo",
+                contentDescription = if (listening) "Rok do" else "Bolo",
                 tint = Color.White,
                 modifier = Modifier.size(24.dp)
             )

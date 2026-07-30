@@ -1,7 +1,7 @@
 name: Release
 
 # Do tarike se chalta hai:
-#  1. Tag push karo:  git tag v1.0.1 && git push origin v1.0.1
+#  1. Tag push karo:  git tag v1.0.2 && git push origin v1.0.2
 #  2. GitHub UI -> Actions -> Release -> Run workflow -> version daalo
 
 on:
@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (jaise v1.0.1)'
+        description: 'Version tag (jaise v1.0.2)'
         required: true
-        default: 'v1.0.1'
+        default: 'v1.0.2'
       prerelease:
         description: 'Pre-release hai?'
         type: boolean
@@ -108,11 +108,22 @@ jobs:
             find app/build/outputs -name '*.apk' || true
             exit 1
           fi
-          # Signature sach me hai ya nahi, confirm karo
-          if ! unzip -l "$APK" | grep -qE 'META-INF/.*\.(RSA|DSA|EC)'; then
-            echo "::error::APK me signature nahi mila"
-            exit 1
+          echo "Found APK: $APK"
+
+          # apksigner se verify karo. Modern APK sirf v2/v3 se sign hote hain,
+          # unme META-INF/*.RSA nahi hoti — isliye zip me dhoondhna galat hai.
+          APKSIGNER=$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$APKSIGNER" ]; then
+            echo "Verifying with $APKSIGNER"
+            "$APKSIGNER" verify --verbose --print-certs "$APK"
+          else
+            echo "apksigner nahi mila, zip fallback check"
+            if ! unzip -l "$APK" | grep -qE 'META-INF/.*\.(RSA|DSA|EC)'; then
+              echo "::error::APK signed nahi lag raha"
+              exit 1
+            fi
           fi
+
           cp "$APK" "dist/jarvis-${{ steps.version.outputs.version }}.apk"
           echo "path=dist/jarvis-${{ steps.version.outputs.version }}.apk" >> "$GITHUB_OUTPUT"
           ls -lh dist/

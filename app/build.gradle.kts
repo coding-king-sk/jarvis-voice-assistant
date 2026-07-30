@@ -41,6 +41,14 @@ android {
                 keyAlias = keystoreProps.getProperty("keyAlias")
                 keyPassword = keystoreProps.getProperty("keyPassword")
             }
+            // Teeno scheme on rakho — purane aur naye dono Android pe install ho jaaye
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 

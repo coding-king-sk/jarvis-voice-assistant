@@ -43,7 +43,6 @@ jobs:
             VERSION="${GITHUB_REF#refs/tags/}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "version_number=${VERSION#v}" >> "$GITHUB_OUTPUT"
           echo "Building $VERSION"
 
       - name: Set up JDK 17
@@ -99,21 +98,18 @@ jobs:
           body: |
             ## Jarvis ${{ steps.version.outputs.version }}
 
-            Android voice assistant — custom wake word, Hinglish commands, Gemini Flash brain.
+            Android voice assistant - custom wake word, Hinglish commands, Gemini Flash brain.
 
             ### Install karna
 
-            1. Neeche se `jarvis-${{ steps.version.outputs.version }}.apk` download karo
+            1. Neeche Assets se `jarvis-${{ steps.version.outputs.version }}.apk` download karo
             2. Phone pe "Unknown sources se install" allow karo
             3. APK install karo, saari permissions Allow karo
 
-            > **Note:** Ye APK bina API key ke build hua ho sakta hai. Apni Gemini key
-            > ke saath chalane ke liye source se build karo — `docs/SETUP.md` dekho.
+            > **Note:** Wake word ke liye ONNX models chahiye aur apni Gemini key
+            > ke saath chalane ke liye source se build karna behtar hai.
+            > Poora setup: `docs/SETUP.md`
 
             ### Is release me
 
             ${{ steps.changelog.outputs.body }}
-
-            ---
-
-            Full setup: [docs/SETUP.md](https://github.com/${{ github.repository }}/blob/main/docs/SETUP.md)

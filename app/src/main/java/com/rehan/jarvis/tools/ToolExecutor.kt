@@ -2,19 +2,27 @@ package com.rehan.jarvis.tools
 
 import android.Manifest
 import android.app.AlarmManager
+import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.SearchManager
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.provider.AlarmClock
+import android.provider.MediaStore
 import android.provider.Settings
 import android.telephony.SmsManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.rehan.jarvis.service.JarvisAccessibilityService
+import com.rehan.jarvis.service.JarvisNotificationListener
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -27,10 +35,15 @@ class ToolExecutor(private val context: Context) {
 
     fun execute(name: String, args: JSONObject): String = try {
         when (name) {
+            // Communication
             "make_call" -> makeCall(args.optString("contact_name"))
             "send_whatsapp" -> sendWhatsApp(args.optString("contact_name"), args.optString("message"))
             "send_sms" -> sendSms(args.optString("contact_name"), args.optString("message"))
+
+            // Apps
             "open_app" -> openApp(args.optString("app_name"))
+
+            // Time
             "set_alarm" -> setAlarm(
                 args.optInt("hour", -1),
                 args.optInt("minute", 0),
@@ -40,10 +53,27 @@ class ToolExecutor(private val context: Context) {
                 args.optString("text"),
                 args.optInt("minutes_from_now", 0)
             )
+
+            // Device
             "set_volume" -> setVolume(args.optInt("level_percent", -1))
             "set_brightness" -> setBrightness(args.optInt("level_percent", -1))
             "toggle_wifi" -> toggleWifi(args.optBoolean("enable", true))
+            "toggle_torch" -> toggleTorch(args.optBoolean("enable", true))
+            "set_ringer_mode" -> setRingerMode(args.optString("mode", "normal"))
+            "set_dnd" -> setDnd(args.optBoolean("enable", true))
+            "open_settings_page" -> openSettingsPage(args.optString("page"))
             "get_device_status" -> deviceStatus()
+
+            // Padhne wale kaam
+            "read_clipboard" -> readClipboard()
+            "read_screen" -> readScreen()
+            "read_notifications" -> readNotifications(args.optInt("count", 5))
+            "reply_last_message" -> replyLastMessage(args.optString("message"))
+
+            // Music
+            "media_control" -> mediaControl(args.optString("action"))
+            "play_music" -> playMusic(args.optString("query"))
+
             else -> "Ye kaam abhi support nahi karta."
         }
     } catch (e: Exception) {
@@ -213,18 +243,188 @@ class ToolExecutor(private val context: Context) {
         return "Android WiFi ko app se seedha $word karne nahi deta, maine panel khol diya hai."
     }
 
+    /** Torch ko app se seedha control kiya ja sakta hai — koi permission nahi chahiye. */
+    private fun toggleTorch(enable: Boolean): String {
+        val cm = context.getSystemService(CameraManager::class.java)
+            ?: return "Camera service nahi mili."
+        val flashCamera = cm.cameraIdList.firstOrNull { id ->
+            cm.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        } ?: return "Is phone me flash light nahi hai."
+
+        cm.setTorchMode(flashCamera, enable)
+        return if (enable) "Torch on kar di." else "Torch off kar di."
+    }
+
+    /** silent / vibrate / normal */
+    private fun setRingerMode(mode: String): String {
+        val nm = context.getSystemService(NotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) {
+            openDndAccess()
+            return "Ringer badalne ke liye ek permission chahiye, maine settings khol di hai."
+        }
+
+        val am = context.getSystemService(AudioManager::class.java)
+        return when (mode.lowercase().trim()) {
+            "silent", "mute", "chup" -> {
+                am.ringerMode = AudioManager.RINGER_MODE_SILENT
+                "Phone silent kar diya."
+            }
+            "vibrate", "vibration" -> {
+                am.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+                "Phone vibrate pe laga diya."
+            }
+            else -> {
+                am.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                "Phone normal mode pe aa gaya."
+            }
+        }
+    }
+
+    private fun setDnd(enable: Boolean): String {
+        val nm = context.getSystemService(NotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) {
+            openDndAccess()
+            return "Do Not Disturb ke liye permission chahiye, maine settings khol di hai."
+        }
+        nm.setInterruptionFilter(
+            if (enable) NotificationManager.INTERRUPTION_FILTER_PRIORITY
+            else NotificationManager.INTERRUPTION_FILTER_ALL
+        )
+        return if (enable) "Do Not Disturb on kar diya." else "Do Not Disturb off kar diya."
+    }
+
+    private fun openDndAccess() {
+        context.startActivity(
+            Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+
+    /** Bluetooth, hotspot, location wagairah ka settings page kholo. */
+    private fun openSettingsPage(page: String): String {
+        val key = page.lowercase().trim()
+        val (action, label) = when {
+            key.contains("bluetooth") -> Settings.ACTION_BLUETOOTH_SETTINGS to "Bluetooth"
+            key.contains("hotspot") || key.contains("tether") ->
+                "android.settings.TETHER_SETTINGS" to "Hotspot"
+            key.contains("location") || key.contains("gps") ->
+                Settings.ACTION_LOCATION_SOURCE_SETTINGS to "Location"
+            key.contains("battery") -> Intent.ACTION_POWER_USAGE_SUMMARY to "Battery"
+            key.contains("data") || key.contains("mobile") ->
+                Settings.ACTION_DATA_ROAMING_SETTINGS to "Mobile data"
+            key.contains("display") || key.contains("screen") ->
+                Settings.ACTION_DISPLAY_SETTINGS to "Display"
+            key.contains("sound") -> Settings.ACTION_SOUND_SETTINGS to "Sound"
+            else -> Settings.ACTION_SETTINGS to "Settings"
+        }
+        return try {
+            context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            "$label settings khol di."
+        } catch (e: Exception) {
+            "$label ka page is phone pe nahi mila."
+        }
+    }
+
     private fun deviceStatus(): String {
         val bm = context.getSystemService(BatteryManager::class.java)
         val battery = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+        val charging = bm?.isCharging == true
 
         val am = context.getSystemService(AudioManager::class.java)
         val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val cur = am.getStreamVolume(AudioManager.STREAM_MUSIC)
         val volPercent = if (max > 0) cur * 100 / max else 0
 
-        val time = SimpleDateFormat("hh:mm a, EEE d MMM", Locale.US).format(System.currentTimeMillis())
+        val ringer = when (am.ringerMode) {
+            AudioManager.RINGER_MODE_SILENT -> "silent"
+            AudioManager.RINGER_MODE_VIBRATE -> "vibrate"
+            else -> "normal"
+        }
 
-        return "Battery: $battery percent. Volume: $volPercent percent. Time: $time."
+        val time = SimpleDateFormat("hh:mm a, EEE d MMM", Locale.US)
+            .format(System.currentTimeMillis())
+
+        val chargeText = if (charging) " aur charge ho raha hai" else ""
+        return "Battery: $battery percent$chargeText. Volume: $volPercent percent. " +
+            "Ringer: $ringer. Time: $time."
+    }
+
+    // ---------- Padhne wale kaam ----------
+
+    private fun readClipboard(): String {
+        val cm = context.getSystemService(ClipboardManager::class.java)
+            ?: return "Clipboard nahi mila."
+        val clip = cm.primaryClip
+        if (clip == null || clip.itemCount == 0) return "Clipboard khaali hai."
+
+        val text = clip.getItemAt(0).coerceToText(context).toString().trim()
+        if (text.isBlank()) return "Clipboard me kuch text nahi hai."
+        return "Clipboard me ye hai: ${text.take(500)}"
+    }
+
+    private fun readScreen(): String {
+        val text = JarvisAccessibilityService.readScreen()
+        return when {
+            text == null -> {
+                JarvisAccessibilityService.openSettings(context)
+                "Screen padhne ke liye Accessibility me Jarvis ko on karna padega, settings khol di hai."
+            }
+            text.isBlank() -> "Screen pe padhne layak kuch nahi mila."
+            else -> "Screen pe ye likha hai: $text"
+        }
+    }
+
+    private fun readNotifications(count: Int): String {
+        if (!JarvisNotificationListener.isEnabled(context)) {
+            JarvisNotificationListener.openSettings(context)
+            return "Notifications padhne ki permission chahiye, maine settings khol di hai. " +
+                "Wahan Jarvis ko on kar do."
+        }
+        return JarvisNotificationListener.summary(count.coerceIn(1, 10))
+    }
+
+    private fun replyLastMessage(message: String): String {
+        if (message.isBlank()) return "Reply me kya likhna hai wo samajh nahi aaya."
+        if (!JarvisNotificationListener.isEnabled(context)) {
+            JarvisNotificationListener.openSettings(context)
+            return "Reply bhejne ke liye notification permission chahiye, settings khol di hai."
+        }
+        return JarvisNotificationListener.replyToLast(context, message)
+    }
+
+    // ---------- Music ----------
+
+    private fun mediaControl(action: String): String =
+        when (action.lowercase().trim()) {
+            "play" -> { MediaTools.play(context); "Music chala diya." }
+            "pause", "stop" -> { MediaTools.pause(context); "Music rok diya." }
+            "next", "skip" -> { MediaTools.next(context); "Agla gaana laga diya." }
+            "previous", "prev", "back" -> { MediaTools.previous(context); "Pichla gaana laga diya." }
+            else -> { MediaTools.playPause(context); "Ho gaya." }
+        }
+
+    private fun playMusic(query: String): String {
+        if (query.isBlank()) {
+            MediaTools.play(context)
+            return "Music chala diya."
+        }
+        val intent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
+            putExtra(SearchManager.QUERY, query)
+            putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            context.startActivity(intent)
+            "$query chala raha hoon."
+        } catch (e: Exception) {
+            val yt = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://music.youtube.com/search?q=" + Uri.encode(query))
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(yt)
+            "Koi music app nahi mili, YouTube Music pe dhoondh raha hoon."
+        }
     }
 
     private fun hasPermission(permission: String) =

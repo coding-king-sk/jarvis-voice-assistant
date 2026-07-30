@@ -13,6 +13,11 @@ object FunctionDeclarations {
     private fun int(desc: String) = JSONObject().put("type", "INTEGER").put("description", desc)
     private fun bool(desc: String) = JSONObject().put("type", "BOOLEAN").put("description", desc)
 
+    private fun enumStr(desc: String, values: List<String>) = JSONObject()
+        .put("type", "STRING")
+        .put("description", desc)
+        .put("enum", JSONArray(values))
+
     private fun fn(
         name: String,
         description: String,
@@ -33,6 +38,8 @@ object FunctionDeclarations {
 
     val all: JSONArray by lazy {
         JSONArray().apply {
+
+            // ---------- Communication ----------
             put(
                 fn(
                     "make_call", "Kisi contact ko phone call lagao",
@@ -60,6 +67,8 @@ object FunctionDeclarations {
                     listOf("contact_name", "message")
                 )
             )
+
+            // ---------- Apps ----------
             put(
                 fn(
                     "open_app", "Phone me koi app kholo",
@@ -67,6 +76,8 @@ object FunctionDeclarations {
                     listOf("app_name")
                 )
             )
+
+            // ---------- Time ----------
             put(
                 fn(
                     "set_alarm", "Alarm set karo",
@@ -88,6 +99,8 @@ object FunctionDeclarations {
                     listOf("text", "minutes_from_now")
                 )
             )
+
+            // ---------- Device ----------
             put(
                 fn(
                     "set_volume", "Media volume set karo",
@@ -111,8 +124,107 @@ object FunctionDeclarations {
             )
             put(
                 fn(
-                    "get_device_status", "Battery, volume, WiFi aur time ki jaankari lo",
+                    "toggle_torch", "Flashlight ya torch on/off karo",
+                    mapOf("enable" to bool("true = on, false = off")),
+                    listOf("enable")
+                )
+            )
+            put(
+                fn(
+                    "set_ringer_mode", "Phone ko silent, vibrate ya normal karo",
+                    mapOf(
+                        "mode" to enumStr(
+                            "Ringer mode",
+                            listOf("silent", "vibrate", "normal")
+                        )
+                    ),
+                    listOf("mode")
+                )
+            )
+            put(
+                fn(
+                    "set_dnd", "Do Not Disturb on ya off karo",
+                    mapOf("enable" to bool("true = on, false = off")),
+                    listOf("enable")
+                )
+            )
+            put(
+                fn(
+                    "open_settings_page",
+                    "Bluetooth, hotspot, location jaisi settings ka page kholo",
+                    mapOf(
+                        "page" to enumStr(
+                            "Kaunsi settings",
+                            listOf(
+                                "bluetooth", "hotspot", "location", "battery",
+                                "mobile_data", "display", "sound"
+                            )
+                        )
+                    ),
+                    listOf("page")
+                )
+            )
+            put(
+                fn(
+                    "get_device_status",
+                    "Battery, charging, volume, ringer mode aur time ki jaankari lo",
                     emptyMap(), emptyList()
+                )
+            )
+
+            // ---------- Padhne wale kaam ----------
+            put(
+                fn(
+                    "read_clipboard", "Jo text copy kiya hua hai use padho",
+                    emptyMap(), emptyList()
+                )
+            )
+            put(
+                fn(
+                    "read_screen",
+                    "Screen pe abhi jo dikh raha hai wo text padho. " +
+                        "Tab use karo jab user kahe 'screen padho' ya 'ye kya likha hai'",
+                    emptyMap(), emptyList()
+                )
+            )
+            put(
+                fn(
+                    "read_notifications",
+                    "Naye notifications padho. Tab use karo jab user pooche 'kya naya aaya' " +
+                        "ya 'notifications sunao'",
+                    mapOf("count" to int("Kitne notifications, default 5")),
+                    emptyList()
+                )
+            )
+            put(
+                fn(
+                    "reply_last_message",
+                    "Aakhri aaye message ka reply bhejo, app khole bina",
+                    mapOf("message" to str("Reply ka text")),
+                    listOf("message")
+                )
+            )
+
+            // ---------- Music ----------
+            put(
+                fn(
+                    "media_control",
+                    "Chal rahe gaane ko play, pause, next ya previous karo",
+                    mapOf(
+                        "action" to enumStr(
+                            "Kya karna hai",
+                            listOf("play", "pause", "next", "previous")
+                        )
+                    ),
+                    listOf("action")
+                )
+            )
+            put(
+                fn(
+                    "play_music",
+                    "Koi gaana, artist ya playlist chalao",
+                    mapOf("query" to str("Gaane ya artist ka naam")),
+                    listOf("query")
                 )
             )
         }

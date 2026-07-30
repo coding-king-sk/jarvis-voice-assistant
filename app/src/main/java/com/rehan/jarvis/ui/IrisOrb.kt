@@ -8,13 +8,13 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -22,172 +22,218 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.unit.dp
 import com.rehan.jarvis.core.AssistantState
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
- * Iris jaisa jeeta-jaagta orb.
+ * Jarvis ka chehra — ek zinda glowing orb.
  *
- * Har state ka apna rang aur apni chaal hai:
- *  IDLE      - dheere saans leta neela orb
- *  LISTENING - chamakta cyan, bahar ripple rings
- *  THINKING  - purple, tezi se ghoomta hua
- *  ACTING    - amber
- *  SPEAKING  - teal, bolne jaisi dhadkan
+ * @param state assistant abhi kya kar raha hai
+ * @param level mic ka live level (0 se 1) — isse asli waveform banta hai
  */
 @Composable
 fun IrisOrb(
     state: AssistantState,
+    level: Float = 0f,
     modifier: Modifier = Modifier
 ) {
-    val transition = rememberInfiniteTransition(label = "iris")
+    val transition = rememberInfiniteTransition(label = "orb")
 
     val spin by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
+        initialValue = 0f, targetValue = 360f,
         animationSpec = infiniteRepeatable(tween(16000, easing = LinearEasing)),
         label = "spin"
     )
     val counterSpin by transition.animateFloat(
-        initialValue = 360f,
-        targetValue = 0f,
+        initialValue = 360f, targetValue = 0f,
         animationSpec = infiniteRepeatable(tween(11000, easing = LinearEasing)),
         label = "counterSpin"
     )
     val breathe by transition.animateFloat(
-        initialValue = 0.93f,
-        targetValue = 1.07f,
+        initialValue = 0.93f, targetValue = 1.07f,
         animationSpec = infiniteRepeatable(
-            tween(2800, easing = FastOutSlowInEasing),
-            RepeatMode.Reverse
+            tween(2800, easing = FastOutSlowInEasing), RepeatMode.Reverse
         ),
         label = "breathe"
     )
     val ripple by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
+        initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(2200, easing = LinearEasing)),
         label = "ripple"
     )
+    val wavePhase by transition.animateFloat(
+        initialValue = 0f, targetValue = (2 * PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing)),
+        label = "wavePhase"
+    )
 
-    // State ke hisaab se size
-    val targetScale = when (state) {
-        AssistantState.IDLE -> 0.88f
-        AssistantState.LISTENING -> 1.10f
-        AssistantState.THINKING -> 0.98f
-        AssistantState.ACTING -> 1.02f
-        AssistantState.SPEAKING -> 1.06f
-    }
+    val listening = state == AssistantState.LISTENING
+    val speaking = state == AssistantState.SPEAKING
+
+    // Mic level ko smooth karo, warna waveform jhatke maarega
+    val smoothLevel by animateFloatAsState(
+        targetValue = if (listening) level.coerceIn(0f, 1f) else 0f,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 320f),
+        label = "level"
+    )
+
     val scale by animateFloatAsState(
-        targetValue = targetScale,
+        targetValue = when (state) {
+            AssistantState.IDLE -> 0.88f
+            AssistantState.LISTENING -> 1.10f
+            AssistantState.THINKING -> 0.98f
+            AssistantState.ACTING -> 1.02f
+            AssistantState.SPEAKING -> 1.06f
+        },
         animationSpec = tween(600, easing = FastOutSlowInEasing),
         label = "scale"
     )
 
-    // State ke hisaab se rang
-    val primaryTarget = when (state) {
-        AssistantState.IDLE -> Color(0xFF4F7CFF)
-        AssistantState.LISTENING -> Color(0xFF35E1F5)
-        AssistantState.THINKING -> Color(0xFFB06CFF)
-        AssistantState.ACTING -> Color(0xFFFFB020)
-        AssistantState.SPEAKING -> Color(0xFF32E0A8)
-    }
-    val secondaryTarget = when (state) {
-        AssistantState.IDLE -> Color(0xFF8A5CF6)
-        AssistantState.LISTENING -> Color(0xFF4F7CFF)
-        AssistantState.THINKING -> Color(0xFFFF5FA2)
-        AssistantState.ACTING -> Color(0xFFFF7A45)
-        AssistantState.SPEAKING -> Color(0xFF35E1F5)
-    }
+    val primary by animateColorAsState(
+        targetValue = when (state) {
+            AssistantState.IDLE -> Color(0xFF4F7CFF)
+            AssistantState.LISTENING -> Color(0xFF35E1F5)
+            AssistantState.THINKING -> Color(0xFFB06CFF)
+            AssistantState.ACTING -> Color(0xFFFFB020)
+            AssistantState.SPEAKING -> Color(0xFF32E0A8)
+        },
+        animationSpec = tween(700), label = "primary"
+    )
+    val secondary by animateColorAsState(
+        targetValue = when (state) {
+            AssistantState.IDLE -> Color(0xFF8A5CF6)
+            AssistantState.LISTENING -> Color(0xFF4F7CFF)
+            AssistantState.THINKING -> Color(0xFFFF5FA2)
+            AssistantState.ACTING -> Color(0xFFFF7A45)
+            AssistantState.SPEAKING -> Color(0xFF35E1F5)
+        },
+        animationSpec = tween(700), label = "secondary"
+    )
 
-    val primary by animateColorAsState(primaryTarget, tween(700), label = "primary")
-    val secondary by animateColorAsState(secondaryTarget, tween(700), label = "secondary")
-
-    val showRipples = state == AssistantState.LISTENING || state == AssistantState.SPEAKING
-
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+    Box(modifier = modifier) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val c = Offset(size.width / 2f, size.height / 2f)
-            val r = (size.minDimension / 2f) * 0.52f * scale * breathe
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val base = minOf(size.width, size.height) / 2f
+            val radius = base * 0.52f * scale * breathe
 
-            // 1. Bahar ki halki roshni
-            softBlob(c, r * 2.4f, primary, 0.20f)
-            softBlob(c, r * 1.7f, secondary, 0.18f)
-
-            // 2. Ripple rings (sunte aur bolte waqt)
-            if (showRipples) {
-                for (i in 0 until 3) {
+            // ---- Bahar failti ripple rings ----
+            if (listening || speaking) {
+                for (i in 0..2) {
                     val p = (ripple + i / 3f) % 1f
                     drawCircle(
-                        color = primary.copy(alpha = (1f - p) * 0.30f),
-                        radius = r * (1f + p * 1.1f),
-                        center = c,
-                        style = Stroke(width = 1.5.dp.toPx())
+                        color = primary.copy(alpha = 0.22f * (1f - p)),
+                        radius = radius * (1f + p * 0.85f),
+                        center = center,
+                        style = Stroke(width = 2.dpToPx())
                     )
                 }
             }
 
-            // 3. Orb ka core
+            // ---- Bahari glow ----
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.95f),
-                        primary,
-                        secondary.copy(alpha = 0.9f)
-                    ),
-                    center = Offset(c.x - r * 0.32f, c.y - r * 0.38f),
-                    radius = r * 1.8f
+                    colors = listOf(primary.copy(alpha = 0.28f), Color.Transparent),
+                    center = center,
+                    radius = radius * 2.1f
                 ),
-                radius = r,
-                center = c
+                radius = radius * 2.1f,
+                center = center
             )
 
-            // 4. Andar ghoomte hue rang ke dhabbe
-            rotate(spin, c) {
-                softBlob(Offset(c.x + r * 0.34f, c.y + r * 0.10f), r * 0.72f, secondary, 0.75f)
+            // ---- Andar ke ghoomte huye rang ----
+            rotate(spin, center) {
+                softBlob(center + Offset(radius * 0.30f, 0f), radius * 0.78f, primary, 0.55f)
+                softBlob(center - Offset(radius * 0.26f, radius * 0.18f), radius * 0.70f, secondary, 0.50f)
             }
-            rotate(counterSpin, c) {
-                softBlob(Offset(c.x - r * 0.30f, c.y + r * 0.24f), r * 0.62f, primary, 0.70f)
-            }
-            rotate(spin * 0.5f, c) {
-                softBlob(Offset(c.x, c.y - r * 0.36f), r * 0.50f, Color.White, 0.35f)
+            rotate(counterSpin, center) {
+                softBlob(center + Offset(0f, radius * 0.30f), radius * 0.62f, Color.White, 0.10f)
             }
 
-            // 5. Kinare ki chamak
+            // ---- Asli voice waveform ----
+            if (listening && smoothLevel > 0.02f) {
+                drawWaveform(
+                    center = center,
+                    radius = radius * 1.12f,
+                    level = smoothLevel,
+                    phase = wavePhase,
+                    color = primary
+                )
+            }
+
+            // ---- Rim (kinare ki chamak) ----
             drawCircle(
                 brush = Brush.sweepGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.55f),
-                        primary.copy(alpha = 0.10f),
-                        secondary.copy(alpha = 0.45f),
-                        Color.White.copy(alpha = 0.55f)
-                    ),
-                    center = c
+                    colors = listOf(primary, secondary, primary),
+                    center = center
                 ),
-                radius = r,
-                center = c,
-                style = Stroke(width = 1.2.dp.toPx())
+                radius = radius,
+                center = center,
+                style = Stroke(width = 2.5f.dpToPx())
             )
 
-            // 6. Upar ki highlight (kaanch jaisa look)
-            softBlob(
-                Offset(c.x - r * 0.34f, c.y - r * 0.42f),
-                r * 0.42f,
-                Color.White,
-                0.55f
+            // ---- Kaanch jaisi highlight ----
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White.copy(alpha = 0.30f), Color.Transparent),
+                    center = center - Offset(radius * 0.35f, radius * 0.40f),
+                    radius = radius * 0.85f
+                ),
+                radius = radius,
+                center = center
             )
         }
     }
 }
 
-/** Kinare se ghulta hua rang ka gola. */
+/**
+ * Orb ke chaaro taraf awaaz ki lehrein.
+ * Har bar ki lambai mic level + ek chalti hui sine wave se banti hai,
+ * isliye ye asli awaaz ke saath hilti hai.
+ */
+private fun DrawScope.drawWaveform(
+    center: Offset,
+    radius: Float,
+    level: Float,
+    phase: Float,
+    color: Color
+) {
+    val bars = 72
+    val maxLength = radius * 0.42f * level
+
+    for (i in 0 until bars) {
+        val angle = (2f * PI.toFloat() / bars) * i
+
+        // Do alag speed ki lehrein mila kar natural dikhta hai
+        val wave = (sin(angle * 3f + phase) * 0.6f + sin(angle * 7f - phase * 1.6f) * 0.4f)
+        val length = maxLength * (0.35f + 0.65f * ((wave + 1f) / 2f))
+
+        val inner = Offset(
+            center.x + cos(angle) * radius,
+            center.y + sin(angle) * radius
+        )
+        val outer = Offset(
+            center.x + cos(angle) * (radius + length),
+            center.y + sin(angle) * (radius + length)
+        )
+
+        drawLine(
+            color = color.copy(alpha = 0.35f + 0.5f * level),
+            start = inner,
+            end = outer,
+            strokeWidth = 2f.dpToPx()
+        )
+    }
+}
+
+/** Halka sa dhundhla rang ka dhabba. */
 private fun DrawScope.softBlob(
     center: Offset,
     radius: Float,
     color: Color,
     alpha: Float
 ) {
-    if (radius <= 0f) return
     drawCircle(
         brush = Brush.radialGradient(
             colors = listOf(color.copy(alpha = alpha), Color.Transparent),
@@ -198,3 +244,14 @@ private fun DrawScope.softBlob(
         center = center
     )
 }
+
+private fun DrawScope.dpToPx(): Float = this.density
+
+private fun Float.dpToPxIn(scope: DrawScope): Float = this * scope.density
+
+/** Chhota helper taaki Canvas ke andar dp likhna aasan rahe. */
+private fun DrawScope.px(dp: Float): Float = dp * density
+
+private fun Float.dpToPx(): Float = this
+
+private fun Int.dpToPx(): Float = this.toFloat()

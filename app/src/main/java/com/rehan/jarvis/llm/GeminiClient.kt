@@ -25,7 +25,7 @@ class GeminiClient(private val apiKey: String) {
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
         .build()
 
     /** Conversation history — follow-up sawal ke liye. */
@@ -36,6 +36,25 @@ class GeminiClient(private val apiKey: String) {
     /** User ka bola hua text bhejo. */
     suspend fun ask(userText: String): LlmReply {
         history.add(content("user", JSONArray().put(JSONObject().put("text", userText))))
+        return send()
+    }
+
+    /**
+     * Photo ke saath sawaal bhejo — "ye kya hai?" wala feature.
+     * @param jpegBase64 JPEG image, base64 me (bina newline ke).
+     */
+    suspend fun askWithImage(jpegBase64: String, userText: String): LlmReply {
+        val parts = JSONArray()
+            .put(JSONObject().put("text", userText))
+            .put(
+                JSONObject().put(
+                    "inline_data",
+                    JSONObject()
+                        .put("mime_type", "image/jpeg")
+                        .put("data", jpegBase64)
+                )
+            )
+        history.add(content("user", parts))
         return send()
     }
 
@@ -152,6 +171,11 @@ class GeminiClient(private val apiKey: String) {
             - Jab user koi kaam karne ko bole to sahi function call karo, sirf baat mat karo.
             - Jab function ka result mile to ek chhoti si confirmation bolo.
             - General sawal ("Delhi ka capital kya hai") ka jawab seedha do, tool mat use karo.
+            - Agar tool ka result lamba text hai (notifications, screen, clipboard),
+              to use chhota karke sirf zaroori baat bolo.
+
+            Photo ke baare me:
+            - Jab user photo bheje to seedha bata do usme kya hai, do line me.
         """.trimIndent()
     }
 }

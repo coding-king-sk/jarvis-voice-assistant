@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Jarvis</string>
+    <string name="listening">Sun raha hoon…</string>
+    <string name="service_channel_name">Jarvis Listening</string>
+    <string name="service_notification_title">Jarvis active hai</string>
+    <string name="service_notification_text">Wake word ke liye sun raha hoon</string>
+    <string name="stop">Stop</string>
+</resources>

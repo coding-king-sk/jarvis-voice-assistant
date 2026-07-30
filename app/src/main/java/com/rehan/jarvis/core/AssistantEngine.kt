@@ -25,11 +25,10 @@ data class ChatMessage(
 )
 
 /**
- * Poore assistant ka dimaag. STT -> (offline rules ya Gemini) -> Tool -> TTS.
+ * Poore assistant ka dimaag. STT -> (offline rules ya Gemini) -> Tools -> TTS.
  *
- * Offline policy:
- *  - Internet nahi hai  -> sab kuch phone pe hi, OfflineRouter se
- *  - Internet hai       -> Gemini (behtar samajh), lekin fail hone par offline fallback
+ * Multi-step: ek hi baat me kai kaam ho to sab ek ke baad ek chalte hain,
+ * jaise "YouTube kholo aur gaana chalao" ya "screenshot lo aur silent kar do".
  */
 class AssistantEngine(private val appContext: Context) {
 
@@ -53,7 +52,6 @@ class AssistantEngine(private val appContext: Context) {
     private val _micLevel = MutableStateFlow(0f)
     val micLevel: StateFlow<Float> = _micLevel.asStateFlow()
 
-    /** UI me chhota sa badge dikhane ke liye. */
     private val _offline = MutableStateFlow(false)
     val offline: StateFlow<Boolean> = _offline.asStateFlow()
 
@@ -66,7 +64,6 @@ class AssistantEngine(private val appContext: Context) {
         tts.init()
         stt.onPartialResult = { _partialText.value = it }
         stt.onRmsChanged = { rms ->
-            // rms roughly -2 se 10 dB tak aata hai; use 0..1 me badal dete hain
             _micLevel.value = ((rms + 2f) / 12f).coerceIn(0f, 1f)
         }
         stt.onFinalResult = { text ->
@@ -86,11 +83,9 @@ class AssistantEngine(private val appContext: Context) {
         }
     }
 
-    /** Mic se sunna shuru karo (wake word ke baad ya button dabane par). */
     fun startListening() {
         if (_state.value != AssistantState.IDLE) return
         tts.stopSpeaking()
-        // Internet nahi hai to phone ka apna offline speech pack use karo
         val online = OfflineRouter.isOnline(appContext)
         _offline.value = !online
         stt.preferOffline = !online
@@ -104,7 +99,6 @@ class AssistantEngine(private val appContext: Context) {
         _state.value = AssistantState.IDLE
     }
 
-    /** Keyboard se type kiya hua command. */
     fun sendText(text: String) {
         if (text.isBlank()) return
         addMessage(text, fromUser = true)
@@ -134,7 +128,7 @@ class AssistantEngine(private val appContext: Context) {
                 respond(
                     "Internet nahi hai, isliye ye samajh nahi paya. " +
                         "Abhi torch, volume, brightness, silent mode, alarm, reminder, " +
-                        "call, message, music, notifications aur time jaise kaam bol sakte ho."
+                        "call, message, music, screenshot aur notifications jaise kaam bol sakte ho."
                 )
             }
             return@launch
@@ -146,49 +140,70 @@ class AssistantEngine(private val appContext: Context) {
 
     /**
      * Bina internet ke samajhne ki koshish.
-     * @return true agar kaam ho gaya
+     * "Torch on karo aur silent kar do" jaise do-do kaam bhi chalte hain.
      */
     private suspend fun runOffline(userText: String): Boolean {
-        return when (val local = OfflineRouter.match(userText)) {
-            null -> false
+        val outputs = mutableListOf<String>()
 
-            is OfflineResult.Speak -> {
-                Log.i(TAG, "offline answer")
-                respond(local.text)
-                true
-            }
+        for (part in OfflineRouter.split(userText)) {
+            when (val local = OfflineRouter.match(part)) {
+                null -> Unit
 
-            is OfflineResult.Tool -> {
-                _state.value = AssistantState.ACTING
-                Log.i(TAG, "offline tool: ${local.tool} ${local.args}")
-                respond(tools.execute(local.tool, local.args))
-                true
+                is OfflineResult.Speak -> outputs.add(local.text)
+
+                is OfflineResult.Tool -> {
+                    _state.value = AssistantState.ACTING
+                    Log.i(TAG, "offline tool: ${local.tool} ${local.args}")
+                    outputs.add(tools.execute(local.tool, local.args))
+                }
             }
         }
+
+        if (outputs.isEmpty()) return false
+        respond(outputs.joinToString(" "))
+        return true
     }
 
-    private suspend fun handleReply(reply: LlmReply, originalText: String) {
+    /**
+     * Gemini ka jawab sambhalo.
+     *
+     * Purana bug: sirf ek hi tool chalta tha aur kahani wahin khatam ho jaati thi.
+     * Ab hum loop chalate hain — Gemini jitne steps maange, sab karte hain.
+     */
+    private suspend fun handleReply(firstReply: LlmReply, originalText: String) {
+        var reply = firstReply
+        val done = mutableListOf<String>()
+        var round = 0
+
+        while (reply.isFunctionCall && round < MAX_TOOL_ROUNDS) {
+            round++
+            _state.value = AssistantState.ACTING
+
+            val results = reply.calls.map { call ->
+                Log.i(TAG, "tool ${round}: ${call.name} ${call.args}")
+                val result = tools.execute(call.name, call.args)
+                done.add(result)
+                call.name to result
+            }
+
+            _state.value = AssistantState.THINKING
+            reply = gemini.sendFunctionResults(results)
+        }
+
         when {
+            // Sab kaam ho gaye lekin Gemini ka confirmation nahi aaya?
+            // Tools ne jo kaha wahi bol do — chup mat raho.
+            reply.error != null && done.isNotEmpty() -> respond(done.joinToString(" "))
+
             reply.error != null -> {
-                // Gemini fail ho gaya (net gir gaya, quota khatam, key galat)?
-                // Chup mat baitho — offline dimaag se koshish karo.
                 if (!runOffline(originalText)) respond(reply.error)
             }
 
-            reply.isFunctionCall -> {
-                _state.value = AssistantState.ACTING
-                val name = reply.functionName!!
-                val args = reply.functionArgs ?: org.json.JSONObject()
-                Log.i(TAG, "tool: $name $args")
-
-                val result = tools.execute(name, args)
-                val followUp = gemini.sendFunctionResult(name, result)
-
-                // Gemini ka confirmation na aaye to tool ka apna message bol do
-                respond(followUp.text ?: result)
+            else -> {
+                val text = reply.text?.takeIf { it.isNotBlank() }
+                    ?: done.joinToString(" ").ifBlank { "Ho gaya." }
+                respond(text)
             }
-
-            else -> respond(reply.text.orEmpty())
         }
     }
 
@@ -236,6 +251,7 @@ class AssistantEngine(private val appContext: Context) {
 
     companion object {
         private const val TAG = "AssistantEngine"
+        private const val MAX_TOOL_ROUNDS = 5
 
         @Volatile private var instance: AssistantEngine? = null
 

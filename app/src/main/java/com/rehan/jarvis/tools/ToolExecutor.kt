@@ -21,6 +21,8 @@ import android.provider.Settings
 import android.telephony.SmsManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.rehan.jarvis.MainActivity
+import com.rehan.jarvis.core.Intents
 import com.rehan.jarvis.service.JarvisAccessibilityService
 import com.rehan.jarvis.service.JarvisNotificationListener
 import org.json.JSONObject
@@ -64,6 +66,13 @@ class ToolExecutor(private val context: Context) {
             "open_settings_page" -> openSettingsPage(args.optString("page"))
             "get_device_status" -> deviceStatus()
 
+            // Screen ke kaam
+            "take_screenshot" -> takeScreenshot()
+            "press_key" -> pressKey(args.optString("key"))
+
+            // Camera
+            "take_photo" -> takePhoto()
+
             // Padhne wale kaam
             "read_clipboard" -> readClipboard()
             "read_screen" -> readScreen()
@@ -73,6 +82,7 @@ class ToolExecutor(private val context: Context) {
             // Music
             "media_control" -> mediaControl(args.optString("action"))
             "play_music" -> playMusic(args.optString("query"))
+            "play_on_youtube" -> playOnYoutube(args.optString("query"))
 
             else -> "Ye kaam abhi support nahi karta."
         }
@@ -98,8 +108,9 @@ class ToolExecutor(private val context: Context) {
         val contact = ContactResolver.resolve(context, contactName)
             ?: return "'$contactName' naam ka koi contact nahi mila."
         val number = ContactResolver.toWhatsAppNumber(contact.number)
+        val text = message.ifBlank { "Hi" }
 
-        val url = "https://wa.me/$number?text=" + Uri.encode(message)
+        val url = "https://wa.me/$number?text=" + Uri.encode(text)
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
@@ -120,7 +131,7 @@ class ToolExecutor(private val context: Context) {
         } else {
             @Suppress("DEPRECATION") SmsManager.getDefault()
         }
-        sms.sendTextMessage(contact.number, null, message, null, null)
+        sms.sendTextMessage(contact.number, null, message.ifBlank { "Hi" }, null, null)
         return "${contact.name} ko SMS bhej diya."
     }
 
@@ -148,6 +159,54 @@ class ToolExecutor(private val context: Context) {
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(launch)
         return "${match.loadLabel(pm)} khol diya."
+    }
+
+    // ---------- Screen ke kaam ----------
+
+    private fun takeScreenshot(): String {
+        return when (JarvisAccessibilityService.takeScreenshot()) {
+            null -> {
+                JarvisAccessibilityService.openSettings(context)
+                "Screenshot ke liye Accessibility me Jarvis on karna padega, settings khol di hai."
+            }
+            true -> "Screenshot le liya, gallery me save ho gaya."
+            false -> "Is Android version pe screenshot nahi le sakta. Power aur volume down saath dabao."
+        }
+    }
+
+    private fun pressKey(key: String): String {
+        val label = when (key.lowercase().trim()) {
+            "home" -> "Home"
+            "back", "peeche" -> "Back"
+            "recents", "recent" -> "Recent apps"
+            "notifications" -> "Notification panel"
+            "quick_settings" -> "Quick settings"
+            "lock" -> "Screen lock"
+            else -> return "Ye button samajh nahi aaya."
+        }
+        return when (JarvisAccessibilityService.pressKey(key)) {
+            null -> {
+                JarvisAccessibilityService.openSettings(context)
+                "Iske liye Accessibility me Jarvis on karna padega, settings khol di hai."
+            }
+            true -> "$label kar diya."
+            false -> "$label is phone pe nahi ho paya."
+        }
+    }
+
+    // ---------- Camera ----------
+
+    /** Jarvis ka apna camera kholo, photo lete hi Gemini batayega usme kya hai. */
+    private fun takePhoto(): String {
+        val intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(Intents.EXTRA_OPEN_CAMERA, true)
+        return try {
+            context.startActivity(intent)
+            "Camera khol raha hoon. Photo lete hi bata dunga usme kya hai."
+        } catch (e: Exception) {
+            "Camera khul nahi paya."
+        }
     }
 
     // ---------- Time ----------
@@ -418,17 +477,68 @@ class ToolExecutor(private val context: Context) {
             context.startActivity(intent)
             "$query chala raha hoon."
         } catch (e: Exception) {
-            val yt = Intent(
-                Intent.ACTION_VIEW,
-                Uri.parse("https://music.youtube.com/search?q=" + Uri.encode(query))
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(yt)
-            "Koi music app nahi mili, YouTube Music pe dhoondh raha hoon."
+            playOnYoutube(query)
         }
+    }
+
+    /**
+     * YouTube pe gaana chalao.
+     *
+     * Intent se YouTube app ko "pehli video chalao" nahi bola ja sakta, isliye:
+     * 1. Pehle YouTube Music try karte hain — wo search karke khud play kar deta hai.
+     * 2. Nahi to YouTube app me search kholte hain aur Accessibility se pehla
+     *    thumbnail khud tap kar dete hain.
+     * 3. Wo bhi na ho to browser.
+     */
+    private fun playOnYoutube(query: String): String {
+        val term = query.ifBlank { "trending songs" }
+
+        // 1) YouTube Music — seedha autoplay
+        try {
+            val music = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
+                setPackage(YT_MUSIC_PKG)
+                putExtra(SearchManager.QUERY, term)
+                putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(music)
+            return "$term chala diya."
+        } catch (_: Exception) {
+        }
+
+        // 2) YouTube app me search + pehli video khud tap karo
+        try {
+            val search = Intent(Intent.ACTION_SEARCH).apply {
+                setPackage(YT_PKG)
+                putExtra("query", term)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(search)
+            return if (JarvisAccessibilityService.isRunning()) {
+                JarvisAccessibilityService.tapFirstYoutubeResult()
+                "YouTube pe $term chala raha hoon."
+            } else {
+                "YouTube pe $term search kar diya, pehli video tap kar do. " +
+                    "Accessibility on karoge to main khud tap kar dunga."
+            }
+        } catch (_: Exception) {
+        }
+
+        // 3) Browser
+        val web = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(term))
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(web)
+        return "YouTube pe $term dhoondh raha hoon."
     }
 
     private fun hasPermission(permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
-    companion object { private const val TAG = "ToolExecutor" }
+    companion object {
+        private const val TAG = "ToolExecutor"
+        private const val YT_PKG = "com.google.android.youtube"
+        private const val YT_MUSIC_PKG = "com.google.android.apps.youtube.music"
+    }
 }

@@ -12,6 +12,14 @@ val localProps = Properties().apply {
 }
 val geminiApiKey: String = localProps.getProperty("GEMINI_API_KEY") ?: ""
 
+// keystore.properties se signing info padho (CI isse banata hai)
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val keystorePath: String? = keystoreProps.getProperty("storeFile")
+val hasKeystore: Boolean = !keystorePath.isNullOrBlank() && rootProject.file(keystorePath).exists()
+
 android {
     namespace = "com.rehan.jarvis"
     compileSdk = 34
@@ -25,8 +33,26 @@ android {
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
     }
 
+    signingConfigs {
+        create("releaseKey") {
+            if (hasKeystore) {
+                storeFile = rootProject.file(keystorePath!!)
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // Bina signature ke APK install nahi hota ("package appears to be invalid").
+            // Keystore mile to usse sign karo, warna debug key se — taaki APK hamesha installable rahe.
+            signingConfig = if (hasKeystore) {
+                signingConfigs.getByName("releaseKey")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

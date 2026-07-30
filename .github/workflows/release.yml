@@ -1,7 +1,7 @@
 name: Release
 
 # Do tarike se chalta hai:
-#  1. Tag push karo:  git tag v1.0.0 && git push origin v1.0.0
+#  1. Tag push karo:  git tag v1.0.1 && git push origin v1.0.1
 #  2. GitHub UI -> Actions -> Release -> Run workflow -> version daalo
 
 on:
@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (jaise v1.0.0)'
+        description: 'Version tag (jaise v1.0.1)'
         required: true
-        default: 'v1.0.0'
+        default: 'v1.0.1'
       prerelease:
         description: 'Pre-release hai?'
         type: boolean
@@ -61,16 +61,61 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> local.properties
 
+      # Bina signature wala APK install nahi hota.
+      # Secret ho to wahi keystore, warna ek bana lo.
+      - name: Prepare signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -e
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Using keystore from repository secret"
+            echo "$KEYSTORE_BASE64" | base64 -d > jarvis.keystore
+            STORE_PASS="$KEYSTORE_PASSWORD"
+            ALIAS="${KEY_ALIAS:-jarvis}"
+            KEY_PASS="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+          else
+            echo "No keystore secret found, generating a temporary one"
+            STORE_PASS="jarvis-temp-key"
+            ALIAS="jarvis"
+            KEY_PASS="jarvis-temp-key"
+            keytool -genkeypair \
+              -keystore jarvis.keystore \
+              -alias "$ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -dname "CN=Jarvis, OU=Dev, O=Jarvis, L=Jaipur, ST=Rajasthan, C=IN"
+          fi
+          printf 'storeFile=jarvis.keystore\n' > keystore.properties
+          printf 'storePassword=%s\n' "$STORE_PASS" >> keystore.properties
+          printf 'keyAlias=%s\n' "$ALIAS" >> keystore.properties
+          printf 'keyPassword=%s\n' "$KEY_PASS" >> keystore.properties
+
       - name: Build release APK
         run: gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Rename APK
+      - name: Collect and verify APK
         id: apk
         run: |
+          set -e
           mkdir -p dist
-          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          APK=$(find app/build/outputs/apk/release -name '*.apk' ! -name '*unsigned*' | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "::error::Signed APK nahi mila — signing config check karo"
+            find app/build/outputs -name '*.apk' || true
+            exit 1
+          fi
+          # Signature sach me hai ya nahi, confirm karo
+          if ! unzip -l "$APK" | grep -qE 'META-INF/.*\.(RSA|DSA|EC)'; then
+            echo "::error::APK me signature nahi mila"
+            exit 1
+          fi
           cp "$APK" "dist/jarvis-${{ steps.version.outputs.version }}.apk"
           echo "path=dist/jarvis-${{ steps.version.outputs.version }}.apk" >> "$GITHUB_OUTPUT"
+          ls -lh dist/
 
       - name: Generate changelog
         id: changelog
@@ -103,12 +148,12 @@ jobs:
             ### Install karna
 
             1. Neeche Assets se `jarvis-${{ steps.version.outputs.version }}.apk` download karo
-            2. Phone pe "Unknown sources se install" allow karo
-            3. APK install karo, saari permissions Allow karo
+            2. Purana Jarvis install hai to pehle **uninstall** karo (signature badal sakti hai)
+            3. "Unknown sources se install" allow karo
+            4. Install karke saari permissions Allow karo
 
-            > **Note:** Wake word ke liye ONNX models chahiye aur apni Gemini key
-            > ke saath chalane ke liye source se build karna behtar hai.
-            > Poora setup: `docs/SETUP.md`
+            > Wake word ke liye ONNX models chahiye aur apni Gemini key ke saath
+            > chalane ke liye source se build karna behtar hai. Setup: `docs/SETUP.md`
 
             ### Is release me
 

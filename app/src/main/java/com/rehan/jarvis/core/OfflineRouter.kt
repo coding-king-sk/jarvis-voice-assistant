@@ -30,6 +30,27 @@ object OfflineRouter {
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
+    /**
+     * "Torch on karo aur phone silent kar do" ko do alag commands me todo.
+     *
+     * Message wale commands ko kabhi nahi todte, warna
+     * "papa ko sms karo ki main aa raha hoon aur khana laaunga" adha kat jaayega.
+     */
+    fun split(rawInput: String): List<String> {
+        val t = rawInput.trim()
+        if (t.isBlank()) return emptyList()
+
+        val lower = t.lowercase()
+        val isMessage = MESSAGE_WORDS.any { lower.contains(it) }
+        if (isMessage) return listOf(t)
+
+        val parts = t.split(SPLIT_REGEX)
+            .map { it.trim() }
+            .filter { it.length > 2 }
+
+        return if (parts.isEmpty()) listOf(t) else parts
+    }
+
     /** Null = samajh nahi aaya. */
     fun match(rawInput: String): OfflineResult? {
         val t = normalize(rawInput)
@@ -40,6 +61,7 @@ object OfflineRouter {
         greeting(t)?.let { return it }
         clock(t)?.let { return it }
         math(t)?.let { return it }
+        system(t)?.let { return it }
         alarm(t)?.let { return it }
         reminder(t)?.let { return it }
         messaging(t)?.let { return it }
@@ -73,7 +95,7 @@ object OfflineRouter {
         has(t, "kya kar sakte ho", "kya kar sakta hai", "help", "madad") ->
             speak(
                 "Main torch, volume, brightness, silent mode, alarm, reminder, " +
-                    "call, message, music aur notifications sambhal sakta hoon. " +
+                    "call, message, music, screenshot aur notifications sambhal sakta hoon. " +
                     "Ye sab bina internet ke bhi chalta hai."
             )
 
@@ -115,7 +137,8 @@ object OfflineRouter {
             "plus", "jama", "+", "add" -> a + b
             "minus", "ghata", "-" -> a - b
             "into", "guna", "x", "*", "times", "multiplied by" -> a * b
-            "divided by", "batta", "/", "bhag" -> if (b == 0.0) return speak("Zero se bhag nahi hota.") else a / b
+            "divided by", "batta", "/", "bhag" ->
+                if (b == 0.0) return speak("Zero se bhag nahi hota.") else a / b
             else -> return null
         }
 
@@ -125,6 +148,36 @@ object OfflineRouter {
             String.format(Locale.US, "%.2f", result)
         }
         return speak("Jawab hai $pretty.")
+    }
+
+    // ---------- Screenshot, camera, navigation ----------
+
+    private fun system(t: String): OfflineResult? = when {
+        has(t, "screenshot", "screen shot", "screen capture") ->
+            tool("take_screenshot", JSONObject())
+
+        has(t, "photo lo", "photo le", "selfie", "tasveer", "take photo", "camera kholo") ->
+            tool("take_photo", JSONObject())
+
+        has(t, "home jao", "home button", "go home") ->
+            tool("press_key", JSONObject().put("key", "home"))
+
+        has(t, "back jao", "peeche jao", "go back") ->
+            tool("press_key", JSONObject().put("key", "back"))
+
+        has(t, "recent apps", "recents") ->
+            tool("press_key", JSONObject().put("key", "recents"))
+
+        has(t, "notification panel", "notification kholo") ->
+            tool("press_key", JSONObject().put("key", "notifications"))
+
+        has(t, "quick settings") ->
+            tool("press_key", JSONObject().put("key", "quick_settings"))
+
+        has(t, "phone lock", "screen lock", "lock kar") ->
+            tool("press_key", JSONObject().put("key", "lock"))
+
+        else -> null
     }
 
     // ---------- Alarm ----------
@@ -142,7 +195,6 @@ object OfflineRouter {
 
         if (evening && hour in 1..11) hour += 12
         if (morning && hour == 12) hour = 0
-        // "5 baje ka alarm" bina subah/shaam ke → subah maan lo
 
         return tool(
             "set_alarm",
@@ -209,15 +261,18 @@ object OfflineRouter {
         has(t, "next song", "agla gaana", "next gaana", "skip", "aage badha") ->
             tool("media_control", JSONObject().put("action", "next"))
 
-        has(t, "previous", "pichla gaana", "pichhla", "peeche") ->
+        has(t, "previous", "pichla gaana", "pichhla", "peeche wala") ->
             tool("media_control", JSONObject().put("action", "previous"))
 
         has(t, "pause", "gaana rok", "music rok", "gaana band", "music band") ->
             tool("media_control", JSONObject().put("action", "pause"))
 
+        has(t, "youtube") && has(t, "song", "gaana", "play", "chala") ->
+            tool("play_on_youtube", JSONObject().put("query", cleanQuery(t)))
+
         has(t, "gaana chala", "music chala", "song chala", "play music", "play song") -> {
-            val query = t.substringBefore(" chala").substringAfter("play ").trim()
-            if (query.length > 3 && !has(query, "gaana", "music", "song")) {
+            val query = cleanQuery(t)
+            if (query.length > 3) {
                 tool("play_music", JSONObject().put("query", query))
             } else {
                 tool("media_control", JSONObject().put("action", "play"))
@@ -225,6 +280,13 @@ object OfflineRouter {
         }
 
         else -> null
+    }
+
+    /** "youtube kholo koi bhi gaana chalao" me se bacha hua naam nikaalo. */
+    private fun cleanQuery(t: String): String {
+        var q = t
+        NOISE_WORDS.forEach { q = q.replace(it, " ") }
+        return q.replace(Regex("\\s+"), " ").trim()
     }
 
     // ---------- Padhne wale kaam ----------
@@ -280,7 +342,10 @@ object OfflineRouter {
         if (has(t, "volume", "awaaz", "sound")) {
             percent(t)?.let { return tool("set_volume", JSONObject().put("level_percent", it)) }
             if (has(t, "badha", "tez", "up", "zyada", "full")) {
-                return tool("set_volume", JSONObject().put("level_percent", if (has(t, "full")) 100 else 80))
+                return tool(
+                    "set_volume",
+                    JSONObject().put("level_percent", if (has(t, "full")) 100 else 80)
+                )
             }
             if (has(t, "kam", "ghata", "down", "dheem")) {
                 return tool("set_volume", JSONObject().put("level_percent", 25))
@@ -359,6 +424,20 @@ object OfflineRouter {
         }
         return t
     }
+
+    private val SPLIT_REGEX = Regex(
+        "\\s+(?:aur|and|phir|then|uske baad|iske baad)\\s+|\\s*,\\s*",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val MESSAGE_WORDS = listOf(
+        "whatsapp", "sms", "message", "msg", "reply", "jawab do", "bhejo"
+    )
+
+    private val NOISE_WORDS = listOf(
+        "youtube", "kholo", "khol do", "open", "koi bhi", "koi", "gaana", "gana",
+        "song", "music", "chalao", "chala do", "chala", "play", "karo", "kar do", "do"
+    )
 
     private val NUMBER_WORDS: Map<String, Int> = mapOf(
         "ek" to 1, "do" to 2, "teen" to 3, "tin" to 3, "char" to 4, "chaar" to 4,

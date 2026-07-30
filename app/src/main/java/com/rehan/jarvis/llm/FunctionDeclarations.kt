@@ -49,12 +49,15 @@ object FunctionDeclarations {
             )
             put(
                 fn(
-                    "send_whatsapp", "Kisi contact ko WhatsApp message bhejo",
+                    "send_whatsapp",
+                    "Kisi contact ko WhatsApp message bhejo. " +
+                        "Ye khud WhatsApp khol deta hai, isliye alag se open_app mat karo. " +
+                        "User ne message na bataya ho to 'Hi' bhej do.",
                     mapOf(
                         "contact_name" to str("Contact ka naam"),
-                        "message" to str("Message ka text")
+                        "message" to str("Message ka text, default 'Hi'")
                     ),
-                    listOf("contact_name", "message")
+                    listOf("contact_name")
                 )
             )
             put(
@@ -74,6 +77,39 @@ object FunctionDeclarations {
                     "open_app", "Phone me koi app kholo",
                     mapOf("app_name" to str("App ka naam jaise 'YouTube', 'Instagram', 'Settings'")),
                     listOf("app_name")
+                )
+            )
+
+            // ---------- Screen ke kaam ----------
+            put(
+                fn(
+                    "take_screenshot",
+                    "Screenshot lo. 'Screenshot lo' ya 'screen capture karo' bolne pe use karo",
+                    emptyMap(), emptyList()
+                )
+            )
+            put(
+                fn(
+                    "press_key",
+                    "Home, back, recent apps, notification panel ya screen lock dabao",
+                    mapOf(
+                        "key" to enumStr(
+                            "Kaunsa button",
+                            listOf("home", "back", "recents", "notifications", "quick_settings", "lock")
+                        )
+                    ),
+                    listOf("key")
+                )
+            )
+
+            // ---------- Camera ----------
+            put(
+                fn(
+                    "take_photo",
+                    "Camera kholo aur photo lo. Photo lete hi Jarvis khud bata dega usme kya hai. " +
+                        "'Camera kholo aur photo lo', 'selfie lo', 'ye kya hai photo se batao' " +
+                        "jaisi baaton pe use karo",
+                    emptyMap(), emptyList()
                 )
             )
 
@@ -133,10 +169,7 @@ object FunctionDeclarations {
                 fn(
                     "set_ringer_mode", "Phone ko silent, vibrate ya normal karo",
                     mapOf(
-                        "mode" to enumStr(
-                            "Ringer mode",
-                            listOf("silent", "vibrate", "normal")
-                        )
+                        "mode" to enumStr("Ringer mode", listOf("silent", "vibrate", "normal"))
                     ),
                     listOf("mode")
                 )
@@ -222,8 +255,19 @@ object FunctionDeclarations {
             put(
                 fn(
                     "play_music",
-                    "Koi gaana, artist ya playlist chalao",
+                    "Phone ki music app me koi gaana, artist ya playlist chalao",
                     mapOf("query" to str("Gaane ya artist ka naam")),
+                    listOf("query")
+                )
+            )
+            put(
+                fn(
+                    "play_on_youtube",
+                    "YouTube pe gaana ya video chalao. Ye khud YouTube khol ke play karta hai, " +
+                        "isliye alag se open_app mat karo. 'YouTube kholo aur koi gaana chalao' " +
+                        "jaisi baat pe sirf yahi call karo. Koi khaas gaana na bataya ho to " +
+                        "query me 'trending songs' bhej do",
+                    mapOf("query" to str("Gaane ya video ka naam")),
                     listOf("query")
                 )
             )

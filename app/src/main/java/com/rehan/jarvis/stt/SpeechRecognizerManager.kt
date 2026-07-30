@@ -2,6 +2,7 @@ package com.rehan.jarvis.stt
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -12,6 +13,9 @@ import android.util.Log
  * Android ka built-in SpeechRecognizer.
  * Hinglish ke liye locale "en-IN" sabse accha kaam karta hai —
  * ye Hindi shabdon ko roman letters me theek likh deta hai.
+ *
+ * Offline: agar phone me language pack downloaded hai to bina internet bhi chalta hai.
+ * Settings > Google > Voice > Offline speech recognition > English (India)
  *
  * IMPORTANT: saare methods main thread se call karo.
  */
@@ -29,6 +33,9 @@ class SpeechRecognizerManager(private val context: Context) {
     /** Awaaz kitni tez hai — orb ka waveform isse chalta hai. */
     var onRmsChanged: ((Float) -> Unit)? = null
 
+    /** Internet na ho to phone ka apna offline model use karo. */
+    var preferOffline = false
+
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
     fun startListening() {
@@ -43,7 +50,12 @@ class SpeechRecognizerManager(private val context: Context) {
             setRecognitionListener(listener)
         }
 
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        isListening = true
+        recognizer?.startListening(buildIntent(preferOffline))
+    }
+
+    private fun buildIntent(offline: Boolean) =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-IN")
@@ -51,11 +63,10 @@ class SpeechRecognizerManager(private val context: Context) {
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
+            if (offline && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            }
         }
-
-        isListening = true
-        recognizer?.startListening(intent)
-    }
 
     fun stopListening() {
         isListening = false
@@ -85,7 +96,9 @@ class SpeechRecognizerManager(private val context: Context) {
                 SpeechRecognizer.ERROR_NO_MATCH,
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Kuch sunai nahi diya."
                 SpeechRecognizer.ERROR_NETWORK,
-                SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network problem hai."
+                SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+                    "Offline speech pack nahi mila. Settings me Google > Voice > " +
+                        "Offline speech recognition se English India download kar lo."
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Mic permission nahi mili."
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy hai, ek second ruko."
                 else -> "Sunne me dikkat aayi."

@@ -1,0 +1,119 @@
+name: Release
+
+# Do tarike se chalta hai:
+#  1. Tag push karo:  git tag v1.0.0 && git push origin v1.0.0
+#  2. GitHub UI -> Actions -> Release -> Run workflow -> version daalo
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (jaise v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      prerelease:
+        description: 'Pre-release hai?'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_number=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Inject Gemini API key
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> local.properties
+
+      - name: Build release APK
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Rename APK
+        id: apk
+        run: |
+          mkdir -p dist
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          cp "$APK" "dist/jarvis-${{ steps.version.outputs.version }}.apk"
+          echo "path=dist/jarvis-${{ steps.version.outputs.version }}.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREV" ]; then
+            LOG=$(git log --pretty=format:'- %s (%h)' --no-merges | head -n 30)
+          else
+            LOG=$(git log "$PREV"..HEAD --pretty=format:'- %s (%h)' --no-merges)
+          fi
+          {
+            echo 'body<<CHANGELOG_EOF'
+            echo "$LOG"
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Jarvis ${{ steps.version.outputs.version }}
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          generate_release_notes: false
+          files: ${{ steps.apk.outputs.path }}
+          body: |
+            ## Jarvis ${{ steps.version.outputs.version }}
+
+            Android voice assistant — custom wake word, Hinglish commands, Gemini Flash brain.
+
+            ### Install karna
+
+            1. Neeche se `jarvis-${{ steps.version.outputs.version }}.apk` download karo
+            2. Phone pe "Unknown sources se install" allow karo
+            3. APK install karo, saari permissions Allow karo
+
+            > **Note:** Ye APK bina API key ke build hua ho sakta hai. Apni Gemini key
+            > ke saath chalane ke liye source se build karo — `docs/SETUP.md` dekho.
+
+            ### Is release me
+
+            ${{ steps.changelog.outputs.body }}
+
+            ---
+
+            Full setup: [docs/SETUP.md](https://github.com/${{ github.repository }}/blob/main/docs/SETUP.md)

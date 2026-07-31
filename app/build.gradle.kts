@@ -100,6 +100,12 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
+    // Camera — Jarvis khud photo leta hai (bina shutter dabaye)
+    val cameraX = "1.3.4"
+    implementation("androidx.camera:camera-core:$cameraX")
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-lifecycle:$cameraX")
+
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

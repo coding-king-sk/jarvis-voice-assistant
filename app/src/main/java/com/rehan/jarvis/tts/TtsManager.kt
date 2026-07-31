@@ -22,11 +22,11 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
 /**
- * Pehle Gemini TTS try karta hai (natural awaaz).
+ * Pehle Gemini TTS try karta hai (natural, dost jaisi awaaz).
  * Fail ho jaaye ya internet na ho to Android ka built-in TextToSpeech.
  *
  * Zaroori baat: speak() tab tak return NAHI karta jab tak bolna poora khatam na ho.
- * Isi wajah se ab awaaz beech me nahi katti.
+ * Isi wajah se awaaz beech me nahi katti.
  */
 class TtsManager(private val context: Context, private val apiKey: String) {
 
@@ -45,14 +45,16 @@ class TtsManager(private val context: Context, private val apiKey: String) {
     /** Chhote common jawab cache kar lete hain — latency bachti hai. */
     private val cache = mutableMapOf<String, ByteArray>()
 
-    var voiceName: String = "Kore"
+    /** Puck sabse casual aur dostana awaaz hai. */
+    var voiceName: String = "Puck"
     var useGeminiTts: Boolean = true
 
     fun init() {
         androidTts = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 androidTts?.language = Locale("en", "IN")
-                androidTts?.setSpeechRate(1.05f)
+                androidTts?.setSpeechRate(1.08f)
+                androidTts?.setPitch(1.02f)
                 androidTtsReady = true
             } else {
                 Log.w(TAG, "Android TTS init failed")
@@ -104,7 +106,6 @@ class TtsManager(private val context: Context, private val apiKey: String) {
             var part = sentence.trim()
             if (part.isEmpty()) continue
 
-            // Ek hi sentence bahut lamba ho to use bhi tod do
             while (part.length > max) {
                 val cut = part.lastIndexOf(' ', max).takeIf { it > 40 } ?: max
                 out.add(part.substring(0, cut).trim())
@@ -123,13 +124,16 @@ class TtsManager(private val context: Context, private val apiKey: String) {
     }
 
     private suspend fun fetchGeminiAudio(text: String): ByteArray? = withContext(Dispatchers.IO) {
+        // Gemini TTS ko andaaz bhi bataya ja sakta hai — isse awaaz dost jaisi lagti hai.
+        val prompt = STYLE_PREFIX + text
+
         val body = JSONObject()
             .put(
                 "contents",
                 JSONArray().put(
                     JSONObject()
                         .put("role", "user")
-                        .put("parts", JSONArray().put(JSONObject().put("text", text)))
+                        .put("parts", JSONArray().put(JSONObject().put("text", prompt)))
                 )
             )
             .put(
@@ -178,10 +182,7 @@ class TtsManager(private val context: Context, private val apiKey: String) {
 
     /**
      * Gemini raw PCM deta hai: 24kHz, 16-bit, mono.
-     *
-     * Purana bug: write() ke turant baad release() call ho jaata tha, jisse
-     * buffer me bacha hua audio kat jaata tha. Ab hum playback head ka intezaar
-     * karte hain.
+     * Buffer poora bajne ke baad hi release karte hain, warna awaaz kat jaati hai.
      */
     private suspend fun playPcm(pcm: ByteArray) = withContext(Dispatchers.IO) {
         try {
@@ -223,7 +224,6 @@ class TtsManager(private val context: Context, private val apiKey: String) {
             }
 
             if (!stopped) {
-                // Buffer me jo bacha hai use bajne do, tabhi release karo
                 val totalFrames = pcm.size / 2
                 val maxWaitMs = (totalFrames * 1000L / SAMPLE_RATE_TTS) + 800L
                 val deadline = System.currentTimeMillis() + maxWaitMs
@@ -305,7 +305,12 @@ class TtsManager(private val context: Context, private val apiKey: String) {
         private const val SAMPLE_RATE_TTS = 24000
         private const val MAX_CHUNK = 220
 
+        /** Awaaz ka andaaz — dost jaisa, casual, thoda halka phulka. */
+        private const val STYLE_PREFIX =
+            "Ek close dost ki tarah, casual aur halke phulke andaaz me, " +
+                "normal baat-cheet wali speed se ye line bolo: "
+
         /** Gemini ki available voices. */
-        val VOICES = listOf("Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr")
+        val VOICES = listOf("Puck", "Kore", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr")
     }
 }

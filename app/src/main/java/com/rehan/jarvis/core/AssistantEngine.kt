@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.rehan.jarvis.BuildConfig
 import com.rehan.jarvis.audio.BargeInDetector
-import com.rehan.jarvis.llm.GeminiClient
+import com.rehan.jarvis.llm.ClaudeClient
 import com.rehan.jarvis.llm.LlmReply
 import com.rehan.jarvis.stt.SpeechRecognizerManager
 import com.rehan.jarvis.tools.ToolExecutor
@@ -27,10 +27,10 @@ data class ChatMessage(
 )
 
 /**
- * Poore assistant ka dimaag. STT -> (local rules ya Gemini) -> Tools -> TTS.
+ * Poore assistant ka dimaag. STT -> (local rules ya Claude) -> Tools -> TTS.
  *
  * Teen khaas cheezein:
- * 1. Fast path — "torch on karo" jaise seedhe kaam bina internet ke, turant.
+ * 1. Fast path — "torch on karo" jaise seedhe kaam bina internet, turant.
  * 2. Multi-step — ek hi baat me kai kaam ho to sab ek ke baad ek chalte hain.
  * 3. Live call mode — jawab ke baad khud sunta rehta hai, beech me tok bhi sakte ho.
  */
@@ -38,9 +38,9 @@ class AssistantEngine(private val appContext: Context) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    private val gemini = GeminiClient(BuildConfig.GEMINI_API_KEY)
+    private val claude = ClaudeClient(appContext, BuildConfig.ANTHROPIC_API_KEY)
     private val tools = ToolExecutor(appContext)
-    private val tts = TtsManager(appContext, BuildConfig.GEMINI_API_KEY)
+    private val tts = TtsManager(appContext)
     private val stt = SpeechRecognizerManager(appContext)
     private val bargeIn = BargeInDetector(appContext)
 
@@ -66,12 +66,6 @@ class AssistantEngine(private val appContext: Context) {
 
     /** Turn khatam hone par call hota hai — service isse wake word wapas start karta hai. */
     var onTurnFinished: (() -> Unit)? = null
-
-    /**
-     * Gemini ki awaaz sunne me achhi hai lekin har jawab pe 2-3 second lagti hai.
-     * Isliye default phone ki apni awaaz — turant bolti hai. Settings se badal sakte ho.
-     */
-    private var preferGeminiTts = false
 
     private var liveStartedAt = 0L
     private var missedTurns = 0
@@ -155,7 +149,7 @@ class AssistantEngine(private val appContext: Context) {
         }
 
         _state.value = AssistantState.THINKING
-        handleReply(gemini.askWithImage(jpegBase64, prompt), prompt)
+        handleReply(claude.askWithImage(jpegBase64, prompt), prompt)
     }
 
     private fun think(userText: String) = scope.launch {
@@ -168,11 +162,18 @@ class AssistantEngine(private val appContext: Context) {
             return@launch
         }
 
+        // "Model badlo claude-opus-5" — naya model aaye to app build karne ki zarurat nahi
+        val modelChange = tryModelChange(userText)
+        if (modelChange != null) {
+            respond(modelChange)
+            return@launch
+        }
+
         val online = OfflineRouter.isOnline(appContext)
         _offline.value = !online
 
         // FAST PATH — "torch on karo", "volume 50", "YouTube kholo" jaise kaam
-        // seedhe phone pe ho jaate hain. Gemini ka intezaar (2-4 second) bach jaata hai.
+        // seedhe phone pe ho jaate hain. Cloud ka intezaar (2-4 second) bach jaata hai.
         if (runOffline(userText)) return@launch
 
         if (!online) {
@@ -185,7 +186,35 @@ class AssistantEngine(private val appContext: Context) {
         }
 
         _state.value = AssistantState.THINKING
-        handleReply(gemini.ask(userText), userText)
+        handleReply(claude.ask(userText), userText)
+    }
+
+    /**
+     * "Model badlo claude-opus-5" / "smart model claude-opus-5" jaisi baat.
+     * Naya Claude aane pe sirf bol dena, app dobara build nahi karni padegi.
+     */
+    private fun tryModelChange(text: String): String? {
+        val t = text.lowercase().trim()
+        if (!t.contains("model")) return null
+
+        if (t.contains("kaunsa") || t.contains("konsa") || t.contains("kya chal")) {
+            return "Abhi normal kaam ke liye ${claude.fastModel} aur sochne wale kaam ke liye " +
+                "${claude.smartModel} chal raha hai."
+        }
+
+        val name = Regex("(claude[a-z0-9.\\-]*)").find(t)?.groupValues?.get(1)
+            ?: return null
+
+        val smart = t.contains("smart") || t.contains("opus") ||
+            t.contains("bada") || t.contains("samajhdar")
+
+        return if (smart) {
+            claude.smartModel = name
+            "Theek hai, sochne wale kaam ab $name se honge."
+        } else {
+            claude.fastModel = name
+            "Theek hai, rozana ke kaam ab $name se honge."
+        }
     }
 
     private fun isGoodbye(text: String): Boolean {
@@ -194,7 +223,7 @@ class AssistantEngine(private val appContext: Context) {
     }
 
     /**
-     * Bina Gemini ke samajhne ki koshish.
+     * Bina cloud ke samajhne ki koshish.
      * "Torch on karo aur silent kar do" jaise do-do kaam bhi chalte hain.
      */
     private suspend fun runOffline(userText: String): Boolean {
@@ -220,7 +249,7 @@ class AssistantEngine(private val appContext: Context) {
     }
 
     /**
-     * Gemini ka jawab sambhalo. Jitne steps chahiye utne chalte hain,
+     * Claude ka jawab sambhalo. Jitne steps chahiye utne chalte hain,
      * isliye "YouTube kholo aur gaana chalao" jaise kaam poore hote hain.
      */
     private suspend fun handleReply(firstReply: LlmReply, originalText: String) {
@@ -233,14 +262,14 @@ class AssistantEngine(private val appContext: Context) {
             _state.value = AssistantState.ACTING
 
             val results = reply.calls.map { call ->
-                Log.i(TAG, "tool ${round}: ${call.name} ${call.args}")
+                Log.i(TAG, "tool $round: ${call.name} ${call.args}")
                 val result = tools.execute(call.name, call.args)
                 done.add(result)
-                call.name to result
+                call to result
             }
 
             _state.value = AssistantState.THINKING
-            reply = gemini.sendFunctionResults(results)
+            reply = claude.sendToolResults(results)
         }
 
         // Local val — warna Kotlin smart cast nahi kar paata
@@ -248,7 +277,7 @@ class AssistantEngine(private val appContext: Context) {
         val text = reply.text
 
         when {
-            // Kaam ho gaye lekin Gemini ka confirmation nahi aaya? Chup mat raho.
+            // Kaam ho gaye lekin confirmation nahi aaya? Chup mat raho.
             error != null && done.isNotEmpty() -> respond(done.joinToString(" "))
 
             error != null -> {
@@ -277,8 +306,6 @@ class AssistantEngine(private val appContext: Context) {
      * User beech me bol de to turant chup ho jao — asli call jaisa.
      */
     private suspend fun speakOut(text: String) {
-        tts.useGeminiTts = preferGeminiTts && OfflineRouter.isOnline(appContext)
-
         bargeIn.start {
             Log.i(TAG, "user ne beech me toka")
             tts.stopSpeaking()
@@ -321,16 +348,24 @@ class AssistantEngine(private val appContext: Context) {
     }
 
     fun newConversation() {
-        gemini.clearHistory()
+        claude.clearHistory()
         _messages.value = emptyList()
         endLive(silent = true)
     }
 
-    fun setVoice(voice: String) { tts.voiceName = voice }
+    /** Purane UI se compatibility — ab awaaz phone ki hi hai. */
+    fun setVoice(voice: String) {
+        tts.voiceName = voice
+    }
 
+    /** Bolne ki speed — 1.0 normal, 1.3 tez. */
+    fun setSpeechRate(rate: Float) {
+        tts.speechRate = rate
+    }
+
+    /** Purane UI se compatibility — cloud TTS hata diya gaya hai. */
     fun setUseGeminiTts(enabled: Boolean) {
-        preferGeminiTts = enabled
-        tts.useGeminiTts = enabled
+        tts.useGeminiTts = false
     }
 
     fun release() {

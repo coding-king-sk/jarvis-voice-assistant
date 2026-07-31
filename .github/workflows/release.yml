@@ -1,7 +1,7 @@
 name: Release
 
 # Do tarike se chalta hai:
-#  1. Tag push karo:  git tag v1.0.2 && git push origin v1.0.2
+#  1. Tag push karo:  git tag v1.0.5 && git push origin v1.0.5
 #  2. GitHub UI -> Actions -> Release -> Run workflow -> version daalo
 
 on:
@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (jaise v1.0.2)'
+        description: 'Version tag (jaise v1.0.5)'
         required: true
-        default: 'v1.0.2'
+        default: 'v1.0.5'
       prerelease:
         description: 'Pre-release hai?'
         type: boolean
@@ -56,10 +56,14 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Inject Gemini API key
+      - name: Inject Anthropic API key
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> local.properties
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::warning::ANTHROPIC_API_KEY secret nahi mila — app me dimaag kaam nahi karega"
+          fi
+          echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> local.properties
 
       # Bina signature wala APK install nahi hota.
       # Secret ho to wahi keystore, warna ek bana lo.
@@ -154,17 +158,19 @@ jobs:
           body: |
             ## Jarvis ${{ steps.version.outputs.version }}
 
-            Android voice assistant - custom wake word, Hinglish commands, Gemini Flash brain.
+            Android voice assistant - custom wake word, Hinglish baat-cheet,
+            Claude ka dimaag, aur yaad rakhne wali memory.
 
             ### Install karna
 
             1. Neeche Assets se `jarvis-${{ steps.version.outputs.version }}.apk` download karo
             2. Purana Jarvis install hai to pehle **uninstall** karo (signature badal sakti hai)
             3. "Unknown sources se install" allow karo
-            4. Install karke saari permissions Allow karo
+            4. Install karke saari permissions Allow karo (mic, contacts, camera)
+            5. Settings -> Accessibility -> Jarvis on karo
 
-            > Wake word ke liye ONNX models chahiye aur apni Gemini key ke saath
-            > chalane ke liye source se build karna behtar hai. Setup: `docs/SETUP.md`
+            > Dimaag chalane ke liye repo Secret me `ANTHROPIC_API_KEY` hona chahiye.
+            > Anthropic free nahi hai — account me thoda credit rakhna padta hai.
 
             ### Is release me
 

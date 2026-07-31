@@ -1,12 +1,8 @@
-# Isko copy karke "local.properties" naam se save karo (bina .example ke)
-# Ye file git me kabhi commit nahi hoti — .gitignore me hai.
+# Ise copy karke local.properties bana lo (wo file git me nahi jaati)
+#
+# Anthropic Claude ki key: https://console.anthropic.com/settings/keys
+# Dhyan rahe — Anthropic free nahi hai, account me thoda credit hona chahiye.
+ANTHROPIC_API_KEY=sk-ant-yahan-apni-key-daalo
 
 # Android SDK ka path (Android Studio khud bhar deta hai)
-# Windows:  sdk.dir=C:\\Users\\TumharaNaam\\AppData\\Local\\Android\\Sdk
-# Mac:      sdk.dir=/Users/tumharanaam/Library/Android/sdk
-# Linux:    sdk.dir=/home/tumharanaam/Android/Sdk
-sdk.dir=YAHAN_SDK_KA_PATH
-
-# Gemini API key — https://aistudio.google.com/apikey se banao
-# Ye key kabhi kisi ko mat bhejo aur na hi commit karo.
-GEMINI_API_KEY=yahan_apni_key_paste_karo
+# sdk.dir=/home/user/Android/Sdk

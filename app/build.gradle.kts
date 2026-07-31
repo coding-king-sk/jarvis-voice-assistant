@@ -10,7 +10,7 @@ val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
-val geminiApiKey: String = localProps.getProperty("GEMINI_API_KEY") ?: ""
+val anthropicApiKey: String = localProps.getProperty("ANTHROPIC_API_KEY") ?: ""
 
 // keystore.properties se signing info padho (CI isse banata hai)
 val keystoreProps = Properties().apply {
@@ -30,7 +30,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
+        buildConfigField("String", "ANTHROPIC_API_KEY", "\"$anthropicApiKey\"")
     }
 
     signingConfigs {

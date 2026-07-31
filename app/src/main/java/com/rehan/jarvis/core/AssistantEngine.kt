@@ -236,18 +236,22 @@ class AssistantEngine(private val appContext: Context) {
             reply = gemini.sendFunctionResults(results)
         }
 
+        // Local val — warna Kotlin smart cast nahi kar paata
+        val error = reply.error
+        val text = reply.text
+
         when {
             // Kaam ho gaye lekin Gemini ka confirmation nahi aaya? Chup mat raho.
-            reply.error != null && done.isNotEmpty() -> respond(done.joinToString(" "))
+            error != null && done.isNotEmpty() -> respond(done.joinToString(" "))
 
-            reply.error != null -> {
-                if (!runOffline(originalText)) respond(reply.error)
+            error != null -> {
+                if (!runOffline(originalText)) respond(error)
             }
 
             else -> {
-                val text = reply.text?.takeIf { it.isNotBlank() }
+                val finalText = text?.takeIf { it.isNotBlank() }
                     ?: done.joinToString(" ").ifBlank { "Ho gaya." }
-                respond(text)
+                respond(finalText)
             }
         }
     }

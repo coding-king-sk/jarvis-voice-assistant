@@ -27,12 +27,12 @@ data class ChatMessage(
 )
 
 /**
- * Poore assistant ka dimaag. STT -> (offline rules ya Gemini) -> Tools -> TTS.
+ * Poore assistant ka dimaag. STT -> (local rules ya Gemini) -> Tools -> TTS.
  *
- * Do khaas cheezein:
- * 1. Multi-step — ek hi baat me kai kaam ho to sab ek ke baad ek chalte hain.
- * 2. Live call mode — jawab dene ke baad Jarvis khud sunta rehta hai, aur bolte
- *    waqt tum beech me tok bhi sakte ho.
+ * Teen khaas cheezein:
+ * 1. Fast path — "torch on karo" jaise seedhe kaam bina internet ke, turant.
+ * 2. Multi-step — ek hi baat me kai kaam ho to sab ek ke baad ek chalte hain.
+ * 3. Live call mode — jawab ke baad khud sunta rehta hai, beech me tok bhi sakte ho.
  */
 class AssistantEngine(private val appContext: Context) {
 
@@ -67,7 +67,12 @@ class AssistantEngine(private val appContext: Context) {
     /** Turn khatam hone par call hota hai — service isse wake word wapas start karta hai. */
     var onTurnFinished: (() -> Unit)? = null
 
-    private var preferGeminiTts = true
+    /**
+     * Gemini ki awaaz sunne me achhi hai lekin har jawab pe 2-3 second lagti hai.
+     * Isliye default phone ki apni awaaz — turant bolti hai. Settings se badal sakte ho.
+     */
+    private var preferGeminiTts = false
+
     private var liveStartedAt = 0L
     private var missedTurns = 0
 
@@ -166,14 +171,16 @@ class AssistantEngine(private val appContext: Context) {
         val online = OfflineRouter.isOnline(appContext)
         _offline.value = !online
 
+        // FAST PATH — "torch on karo", "volume 50", "YouTube kholo" jaise kaam
+        // seedhe phone pe ho jaate hain. Gemini ka intezaar (2-4 second) bach jaata hai.
+        if (runOffline(userText)) return@launch
+
         if (!online) {
-            if (!runOffline(userText)) {
-                respond(
-                    "Internet nahi hai, isliye ye samajh nahi paya. " +
-                        "Abhi torch, volume, brightness, silent mode, alarm, reminder, " +
-                        "call, message, music, screenshot aur notifications jaise kaam bol sakte ho."
-                )
-            }
+            respond(
+                "Internet nahi hai, isliye ye samajh nahi paya. " +
+                    "Abhi torch, volume, brightness, silent mode, alarm, reminder, " +
+                    "call, message, music, screenshot aur notifications jaise kaam bol sakte ho."
+            )
             return@launch
         }
 
@@ -187,7 +194,7 @@ class AssistantEngine(private val appContext: Context) {
     }
 
     /**
-     * Bina internet ke samajhne ki koshish.
+     * Bina Gemini ke samajhne ki koshish.
      * "Torch on karo aur silent kar do" jaise do-do kaam bhi chalte hain.
      */
     private suspend fun runOffline(userText: String): Boolean {
@@ -201,7 +208,7 @@ class AssistantEngine(private val appContext: Context) {
 
                 is OfflineResult.Tool -> {
                     _state.value = AssistantState.ACTING
-                    Log.i(TAG, "offline tool: ${local.tool} ${local.args}")
+                    Log.i(TAG, "local tool: ${local.tool} ${local.args}")
                     outputs.add(tools.execute(local.tool, local.args))
                 }
             }

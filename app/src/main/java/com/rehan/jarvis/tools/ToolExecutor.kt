@@ -22,6 +22,7 @@ import android.telephony.SmsManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.rehan.jarvis.MainActivity
+import com.rehan.jarvis.camera.CameraCaptureActivity
 import com.rehan.jarvis.core.Intents
 import com.rehan.jarvis.service.JarvisAccessibilityService
 import com.rehan.jarvis.service.JarvisNotificationListener
@@ -71,7 +72,7 @@ class ToolExecutor(private val context: Context) {
             "press_key" -> pressKey(args.optString("key"))
 
             // Camera
-            "take_photo" -> takePhoto()
+            "take_photo" -> takePhoto(args.optString("camera"), args.optString("question"))
 
             // Padhne wale kaam
             "read_clipboard" -> readClipboard()
@@ -196,15 +197,39 @@ class ToolExecutor(private val context: Context) {
 
     // ---------- Camera ----------
 
-    /** Jarvis ka apna camera kholo, photo lete hi Gemini batayega usme kya hai. */
-    private fun takePhoto(): String {
-        val intent = Intent(context, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(Intents.EXTRA_OPEN_CAMERA, true)
+    /**
+     * Jarvis khud photo kheenchta hai — shutter dabane ki zarurat nahi.
+     * Camera permission na ho to app khol ke permission maang lete hain.
+     */
+    private fun takePhoto(camera: String, question: String): String {
+        if (!hasPermission(Manifest.permission.CAMERA)) {
+            val ask = Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(Intents.EXTRA_OPEN_CAMERA, true)
+            return try {
+                context.startActivity(ask)
+                "Camera ki permission chahiye, app khol di hai. Allow kar do phir bolna."
+            } catch (e: Exception) {
+                "Camera permission nahi hai."
+            }
+        }
+
+        val word = camera.lowercase()
+        val front = word.contains("front") || word.contains("selfie") ||
+            word.contains("saamne") || word.contains("meri")
+
+        val intent = Intent(context, CameraCaptureActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .putExtra(CameraCaptureActivity.EXTRA_FRONT, front)
+        if (question.isNotBlank()) {
+            intent.putExtra(CameraCaptureActivity.EXTRA_QUESTION, question)
+        }
+
         return try {
             context.startActivity(intent)
-            "Camera khol raha hoon. Photo lete hi bata dunga usme kya hai."
+            "Photo le raha hoon, ek second."
         } catch (e: Exception) {
+            Log.e(TAG, "camera activity fail", e)
             "Camera khul nahi paya."
         }
     }
@@ -468,63 +493,68 @@ class ToolExecutor(private val context: Context) {
             MediaTools.play(context)
             return "Music chala diya."
         }
-        val intent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
-            putExtra(SearchManager.QUERY, query)
-            putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        return try {
-            context.startActivity(intent)
-            "$query chala raha hoon."
-        } catch (e: Exception) {
-            playOnYoutube(query)
-        }
+        return playOnYoutube(query)
     }
 
     /**
-     * YouTube pe gaana chalao.
+     * Gaana sach me BAJNA chahiye, sirf search khulna kaafi nahi.
      *
-     * Intent se YouTube app ko "pehli video chalao" nahi bola ja sakta, isliye:
-     * 1. Pehle YouTube Music try karte hain — wo search karke khud play kar deta hai.
-     * 2. Nahi to YouTube app me search kholte hain aur Accessibility se pehla
-     *    thumbnail khud tap kar dete hain.
-     * 3. Wo bhi na ho to browser.
+     * Isliye seedha "play from search" intent bhejte hain — ye YouTube ko bolta
+     * hai "ye dhoondho aur pehla result chala do". Jo app kaam kar jaaye, wahin
+     * ruk jaate hain:
+     *   1. YouTube Music (sabse saaf autoplay)
+     *   2. YouTube app
+     *   3. Koi bhi music app jo ye intent samajhti ho (Spotify wagairah)
+     *   4. YouTube app me search + Accessibility se khud pehla thumbnail tap
+     *   5. Browser
      */
     private fun playOnYoutube(query: String): String {
         val term = query.ifBlank { "trending songs" }
 
-        // 1) YouTube Music — seedha autoplay
-        try {
-            val music = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
-                setPackage(YT_MUSIC_PKG)
-                putExtra(SearchManager.QUERY, term)
-                putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // 1-3) "dhoondho aur chala do" intent
+        for (pkg in PLAY_PACKAGES) {
+            if (pkg != null && !isInstalled(pkg)) continue
+            try {
+                val play = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).apply {
+                    if (pkg != null) setPackage(pkg)
+                    putExtra(SearchManager.QUERY, term)
+                    putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(play)
+
+                // Kabhi kabhi YouTube sirf results dikha deta hai — to khud tap kar denge
+                if (pkg == YT_PKG && JarvisAccessibilityService.isRunning()) {
+                    JarvisAccessibilityService.tapFirstYoutubeResult()
+                }
+                return "$term chala diya."
+            } catch (_: Exception) {
+                // agli app try karo
             }
-            context.startActivity(music)
-            return "$term chala diya."
-        } catch (_: Exception) {
         }
 
-        // 2) YouTube app me search + pehli video khud tap karo
-        try {
-            val search = Intent(Intent.ACTION_SEARCH).apply {
-                setPackage(YT_PKG)
-                putExtra("query", term)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // 4) YouTube me search kholo aur pehli video khud tap karo
+        if (isInstalled(YT_PKG)) {
+            try {
+                val search = Intent(Intent.ACTION_SEARCH).apply {
+                    setPackage(YT_PKG)
+                    putExtra("query", term)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(search)
+                return if (JarvisAccessibilityService.isRunning()) {
+                    JarvisAccessibilityService.tapFirstYoutubeResult()
+                    "YouTube pe $term chala raha hoon."
+                } else {
+                    JarvisAccessibilityService.openSettings(context)
+                    "YouTube pe $term search kar diya. Gaana khud chalu ho jaaye iske liye " +
+                        "Accessibility me Jarvis on kar do — settings khol di hai."
+                }
+            } catch (_: Exception) {
             }
-            context.startActivity(search)
-            return if (JarvisAccessibilityService.isRunning()) {
-                JarvisAccessibilityService.tapFirstYoutubeResult()
-                "YouTube pe $term chala raha hoon."
-            } else {
-                "YouTube pe $term search kar diya, pehli video tap kar do. " +
-                    "Accessibility on karoge to main khud tap kar dunga."
-            }
-        } catch (_: Exception) {
         }
 
-        // 3) Browser
+        // 5) Browser
         val web = Intent(
             Intent.ACTION_VIEW,
             Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(term))
@@ -533,6 +563,13 @@ class ToolExecutor(private val context: Context) {
         return "YouTube pe $term dhoondh raha hoon."
     }
 
+    private fun isInstalled(pkg: String): Boolean =
+        try {
+            context.packageManager.getLaunchIntentForPackage(pkg) != null
+        } catch (e: Exception) {
+            false
+        }
+
     private fun hasPermission(permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
@@ -540,5 +577,8 @@ class ToolExecutor(private val context: Context) {
         private const val TAG = "ToolExecutor"
         private const val YT_PKG = "com.google.android.youtube"
         private const val YT_MUSIC_PKG = "com.google.android.apps.youtube.music"
+
+        /** Kis order me try karna hai. null = jo bhi app ye intent handle kar sake. */
+        private val PLAY_PACKAGES = listOf(YT_MUSIC_PKG, YT_PKG, null)
     }
 }

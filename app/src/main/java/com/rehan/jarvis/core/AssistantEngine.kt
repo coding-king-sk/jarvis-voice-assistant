@@ -3,6 +3,7 @@ package com.rehan.jarvis.core
 import android.content.Context
 import android.util.Log
 import com.rehan.jarvis.BuildConfig
+import com.rehan.jarvis.audio.BargeInDetector
 import com.rehan.jarvis.llm.GeminiClient
 import com.rehan.jarvis.llm.LlmReply
 import com.rehan.jarvis.stt.SpeechRecognizerManager
@@ -11,6 +12,7 @@ import com.rehan.jarvis.tts.TtsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,8 +29,10 @@ data class ChatMessage(
 /**
  * Poore assistant ka dimaag. STT -> (offline rules ya Gemini) -> Tools -> TTS.
  *
- * Multi-step: ek hi baat me kai kaam ho to sab ek ke baad ek chalte hain,
- * jaise "YouTube kholo aur gaana chalao" ya "screenshot lo aur silent kar do".
+ * Do khaas cheezein:
+ * 1. Multi-step — ek hi baat me kai kaam ho to sab ek ke baad ek chalte hain.
+ * 2. Live call mode — jawab dene ke baad Jarvis khud sunta rehta hai, aur bolte
+ *    waqt tum beech me tok bhi sakte ho.
  */
 class AssistantEngine(private val appContext: Context) {
 
@@ -38,6 +42,7 @@ class AssistantEngine(private val appContext: Context) {
     private val tools = ToolExecutor(appContext)
     private val tts = TtsManager(appContext, BuildConfig.GEMINI_API_KEY)
     private val stt = SpeechRecognizerManager(appContext)
+    private val bargeIn = BargeInDetector(appContext)
 
     private val _state = MutableStateFlow(AssistantState.IDLE)
     val state: StateFlow<AssistantState> = _state.asStateFlow()
@@ -55,10 +60,16 @@ class AssistantEngine(private val appContext: Context) {
     private val _offline = MutableStateFlow(false)
     val offline: StateFlow<Boolean> = _offline.asStateFlow()
 
+    /** Live call mode chal raha hai ya nahi — UI ise dikha sakta hai. */
+    private val _liveMode = MutableStateFlow(false)
+    val liveMode: StateFlow<Boolean> = _liveMode.asStateFlow()
+
     /** Turn khatam hone par call hota hai — service isse wake word wapas start karta hai. */
     var onTurnFinished: (() -> Unit)? = null
 
     private var preferGeminiTts = true
+    private var liveStartedAt = 0L
+    private var missedTurns = 0
 
     init {
         tts.init()
@@ -69,6 +80,7 @@ class AssistantEngine(private val appContext: Context) {
         stt.onFinalResult = { text ->
             _partialText.value = ""
             _micLevel.value = 0f
+            missedTurns = 0
             addMessage(text, fromUser = true)
             think(text)
         }
@@ -76,9 +88,17 @@ class AssistantEngine(private val appContext: Context) {
             _partialText.value = ""
             _micLevel.value = 0f
             _state.value = AssistantState.IDLE
-            scope.launch {
-                speakOut(message)
-                finishTurn()
+
+            // Live mode me har chhoti si khamoshi pe bolna irritating lagta hai.
+            // Do baar kuch na aaye to chupchaap wake word pe wapas chale jao.
+            if (_liveMode.value) {
+                missedTurns++
+                if (missedTurns >= MAX_MISSES) endLive(silent = true) else finishTurn()
+            } else {
+                scope.launch {
+                    speakOut(message)
+                    finishTurn()
+                }
             }
         }
     }
@@ -86,6 +106,7 @@ class AssistantEngine(private val appContext: Context) {
     fun startListening() {
         if (_state.value != AssistantState.IDLE) return
         tts.stopSpeaking()
+        bargeIn.stop()
         val online = OfflineRouter.isOnline(appContext)
         _offline.value = !online
         stt.preferOffline = !online
@@ -97,6 +118,19 @@ class AssistantEngine(private val appContext: Context) {
         stt.stopListening()
         _micLevel.value = 0f
         _state.value = AssistantState.IDLE
+    }
+
+    /** Live call mode band karo — UI ka cross button ya "bas" bolne pe. */
+    fun endLive(silent: Boolean = false) {
+        _liveMode.value = false
+        liveStartedAt = 0L
+        missedTurns = 0
+        bargeIn.stop()
+        stt.stopListening()
+        _micLevel.value = 0f
+        _state.value = AssistantState.IDLE
+        if (!silent) addMessage("Live baat band. Wake word bol ke phir bula lena.", fromUser = false)
+        onTurnFinished?.invoke()
     }
 
     fun sendText(text: String) {
@@ -120,6 +154,15 @@ class AssistantEngine(private val appContext: Context) {
     }
 
     private fun think(userText: String) = scope.launch {
+        // "Bas", "chup ho ja", "bye" — live baat khatam
+        if (isGoodbye(userText)) {
+            addMessage("Theek hai, bula lena jab kaam ho.", fromUser = false)
+            _state.value = AssistantState.SPEAKING
+            speakOut("Theek hai, bula lena jab kaam ho.")
+            endLive(silent = true)
+            return@launch
+        }
+
         val online = OfflineRouter.isOnline(appContext)
         _offline.value = !online
 
@@ -136,6 +179,11 @@ class AssistantEngine(private val appContext: Context) {
 
         _state.value = AssistantState.THINKING
         handleReply(gemini.ask(userText), userText)
+    }
+
+    private fun isGoodbye(text: String): Boolean {
+        val t = text.lowercase().trim()
+        return t.length <= 30 && GOODBYE_WORDS.any { t.contains(it) }
     }
 
     /**
@@ -165,10 +213,8 @@ class AssistantEngine(private val appContext: Context) {
     }
 
     /**
-     * Gemini ka jawab sambhalo.
-     *
-     * Purana bug: sirf ek hi tool chalta tha aur kahani wahin khatam ho jaati thi.
-     * Ab hum loop chalate hain — Gemini jitne steps maange, sab karte hain.
+     * Gemini ka jawab sambhalo. Jitne steps chahiye utne chalte hain,
+     * isliye "YouTube kholo aur gaana chalao" jaise kaam poore hote hain.
      */
     private suspend fun handleReply(firstReply: LlmReply, originalText: String) {
         var reply = firstReply
@@ -191,8 +237,7 @@ class AssistantEngine(private val appContext: Context) {
         }
 
         when {
-            // Sab kaam ho gaye lekin Gemini ka confirmation nahi aaya?
-            // Tools ne jo kaha wahi bol do — chup mat raho.
+            // Kaam ho gaye lekin Gemini ka confirmation nahi aaya? Chup mat raho.
             reply.error != null && done.isNotEmpty() -> respond(done.joinToString(" "))
 
             reply.error != null -> {
@@ -216,16 +261,48 @@ class AssistantEngine(private val appContext: Context) {
         finishTurn()
     }
 
-    /** Offline ho to hamesha phone ki apni awaaz use karo. */
+    /**
+     * Bolo, aur bolte waqt mic khula rakho.
+     * User beech me bol de to turant chup ho jao — asli call jaisa.
+     */
     private suspend fun speakOut(text: String) {
         tts.useGeminiTts = preferGeminiTts && OfflineRouter.isOnline(appContext)
-        tts.speak(text)
+
+        bargeIn.start {
+            Log.i(TAG, "user ne beech me toka")
+            tts.stopSpeaking()
+        }
+        try {
+            tts.speak(text)
+        } finally {
+            bargeIn.stop()
+        }
     }
 
+    /**
+     * Jawab ke baad chup mat baitho — thodi der aur suno.
+     * Isse har baar wake word bolne ki zarurat nahi padti.
+     */
     private fun finishTurn() {
-        _state.value = AssistantState.IDLE
         _micLevel.value = 0f
-        onTurnFinished?.invoke()
+        _state.value = AssistantState.IDLE
+
+        if (liveStartedAt == 0L) liveStartedAt = System.currentTimeMillis()
+        val liveTooLong = System.currentTimeMillis() - liveStartedAt > LIVE_MAX_MS
+
+        if (liveTooLong || missedTurns >= MAX_MISSES) {
+            _liveMode.value = false
+            liveStartedAt = 0L
+            missedTurns = 0
+            onTurnFinished?.invoke()
+            return
+        }
+
+        _liveMode.value = true
+        scope.launch {
+            delay(FOLLOW_UP_DELAY_MS)
+            if (_liveMode.value && _state.value == AssistantState.IDLE) startListening()
+        }
     }
 
     private fun addMessage(text: String, fromUser: Boolean) {
@@ -235,6 +312,7 @@ class AssistantEngine(private val appContext: Context) {
     fun newConversation() {
         gemini.clearHistory()
         _messages.value = emptyList()
+        endLive(silent = true)
     }
 
     fun setVoice(voice: String) { tts.voiceName = voice }
@@ -245,6 +323,7 @@ class AssistantEngine(private val appContext: Context) {
     }
 
     fun release() {
+        bargeIn.stop()
         stt.destroy()
         tts.release()
     }
@@ -252,6 +331,20 @@ class AssistantEngine(private val appContext: Context) {
     companion object {
         private const val TAG = "AssistantEngine"
         private const val MAX_TOOL_ROUNDS = 5
+
+        /** Jawab ke baad itni der me dobara sun-na shuru. */
+        private const val FOLLOW_UP_DELAY_MS = 300L
+
+        /** Itni der tak koi baat na ho to live mode band. */
+        private const val LIVE_MAX_MS = 3 * 60 * 1000L
+
+        /** Itni baar kuch sunai na de to live mode band. */
+        private const val MAX_MISSES = 2
+
+        private val GOODBYE_WORDS = listOf(
+            "bas", "bye", "chup ho", "chup ja", "band karo", "stop", "khatam",
+            "thik hai bas", "jao", "so ja", "good night"
+        )
 
         @Volatile private var instance: AssistantEngine? = null
 

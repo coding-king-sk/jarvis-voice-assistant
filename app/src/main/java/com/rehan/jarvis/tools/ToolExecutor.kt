@@ -24,6 +24,7 @@ import androidx.core.content.ContextCompat
 import com.rehan.jarvis.MainActivity
 import com.rehan.jarvis.camera.CameraCaptureActivity
 import com.rehan.jarvis.core.Intents
+import com.rehan.jarvis.memory.MemoryStore
 import com.rehan.jarvis.service.JarvisAccessibilityService
 import com.rehan.jarvis.service.JarvisNotificationListener
 import org.json.JSONObject
@@ -31,8 +32,8 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 /**
- * Gemini jo function call karta hai, uska asli kaam yahan hota hai.
- * Har function ek chhota sa string return karta hai jo wapas Gemini ko jaata hai.
+ * Claude jo tool call karta hai, uska asli kaam yahan hota hai.
+ * Har function ek chhota sa string return karta hai jo wapas Claude ko jaata hai.
  */
 class ToolExecutor(private val context: Context) {
 
@@ -84,6 +85,11 @@ class ToolExecutor(private val context: Context) {
             "media_control" -> mediaControl(args.optString("action"))
             "play_music" -> playMusic(args.optString("query"))
             "play_on_youtube" -> playOnYoutube(args.optString("query"))
+
+            // Yaaddaasht — phone me hi save hoti hai, kahin bahar nahi jaati
+            "remember_fact" -> MemoryStore.add(context, args.optString("fact"))
+            "recall_facts" -> MemoryStore.recall(context)
+            "forget_memory" -> MemoryStore.forget(context, args.optString("about"))
 
             else -> "Ye kaam abhi support nahi karta."
         }
